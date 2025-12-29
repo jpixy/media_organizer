@@ -1,0 +1,290 @@
+//! Directory scanner module.
+//!
+//! Scans directories recursively for video files, identifying samples
+//! and empty directories.
+
+use crate::models::media::VideoFile;
+use crate::Result;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+/// Supported video file extensions.
+const VIDEO_EXTENSIONS: &[&str] = &[
+    // Common formats
+    "mkv", "mp4", "avi", "mov", "wmv",
+    // Additional formats
+    "m4v", "ts", "m2ts", "flv", "webm",
+    // Less common but supported
+    "mpg", "mpeg", "vob", "ogv", "ogm",
+    "divx", "xvid", "3gp", "3g2", "mts",
+    "rm", "rmvb", "asf", "f4v",
+];
+
+/// Result of scanning a directory.
+#[derive(Debug, Default)]
+pub struct ScanResult {
+    /// Video files found (excluding samples).
+    pub videos: Vec<VideoFile>,
+    /// Sample files found.
+    pub samples: Vec<VideoFile>,
+    /// Empty directories found.
+    pub empty_dirs: Vec<PathBuf>,
+    /// Total files scanned.
+    pub total_files_scanned: usize,
+    /// Total directories scanned.
+    pub total_dirs_scanned: usize,
+}
+
+impl ScanResult {
+    /// Get total video count (including samples).
+    pub fn total_videos(&self) -> usize {
+        self.videos.len() + self.samples.len()
+    }
+}
+
+/// Check if a file extension is a video format.
+fn is_video_extension(ext: &str) -> bool {
+    let ext_lower = ext.to_lowercase();
+    VIDEO_EXTENSIONS.contains(&ext_lower.as_str())
+}
+
+/// Check if a path component indicates a sample.
+/// Matches "sample", "samples", or paths containing "sample" folder.
+fn is_sample_path(path: &Path) -> bool {
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component {
+            let name_lower = name.to_string_lossy().to_lowercase();
+            if name_lower == "sample" || name_lower == "samples" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a filename indicates a sample file.
+/// Matches filenames containing "sample" (case-insensitive).
+fn is_sample_filename(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    // Check for common sample patterns
+    lower.contains("sample") && !lower.contains("sampler")
+}
+
+/// Create a VideoFile from a path.
+fn create_video_file(path: &Path) -> Result<VideoFile> {
+    let metadata = std::fs::metadata(path)?;
+    let modified = metadata
+        .modified()
+        .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
+        .unwrap_or_else(|_| chrono::Utc::now());
+
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let parent_dir = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let is_sample = is_sample_path(path) || is_sample_filename(&filename);
+
+    Ok(VideoFile {
+        path: path.to_path_buf(),
+        filename,
+        size: metadata.len(),
+        modified,
+        is_sample,
+        parent_dir,
+    })
+}
+
+/// Scan a directory for video files.
+///
+/// This function recursively scans the given directory and returns:
+/// - All video files (excluding samples)
+/// - Sample files (in Sample folders or with "sample" in filename)
+/// - Empty directories
+///
+/// # Arguments
+/// * `path` - The directory path to scan
+///
+/// # Returns
+/// A `ScanResult` containing categorized files and directories.
+pub fn scan_directory(path: &Path) -> Result<ScanResult> {
+    // Validate path exists and is a directory
+    if !path.exists() {
+        return Err(crate::Error::PathNotFound(path.display().to_string()));
+    }
+    if !path.is_dir() {
+        return Err(crate::Error::NotADirectory(path.display().to_string()));
+    }
+
+    let mut result = ScanResult::default();
+    let mut dirs_with_files: HashSet<PathBuf> = HashSet::new();
+    let mut all_dirs: HashSet<PathBuf> = HashSet::new();
+
+    // Walk the directory tree
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let entry_path = entry.path();
+
+        if entry.file_type().is_dir() {
+            result.total_dirs_scanned += 1;
+            all_dirs.insert(entry_path.to_path_buf());
+        } else if entry.file_type().is_file() {
+            result.total_files_scanned += 1;
+
+            // Check if it's a video file
+            if let Some(ext) = entry_path.extension() {
+                if is_video_extension(&ext.to_string_lossy()) {
+                    match create_video_file(entry_path) {
+                        Ok(video_file) => {
+                            // Mark parent directory as having files
+                            if let Some(parent) = entry_path.parent() {
+                                dirs_with_files.insert(parent.to_path_buf());
+                            }
+
+                            // Categorize as sample or regular video
+                            if video_file.is_sample {
+                                result.samples.push(video_file);
+                            } else {
+                                result.videos.push(video_file);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to read video file {:?}: {}", entry_path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Find empty directories (directories with no video files)
+    for dir in all_dirs {
+        // Skip the root scan directory itself
+        if dir == path {
+            continue;
+        }
+        
+        // Check if this directory or any subdirectory has video files
+        let has_videos = dirs_with_files.iter().any(|d| d.starts_with(&dir));
+        if !has_videos {
+            // Double-check it's truly empty (no files at all)
+            let is_empty = std::fs::read_dir(&dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                result.empty_dirs.push(dir);
+            }
+        }
+    }
+
+    // Sort results for consistent output
+    result.videos.sort_by(|a, b| a.path.cmp(&b.path));
+    result.samples.sort_by(|a, b| a.path.cmp(&b.path));
+    result.empty_dirs.sort();
+
+    tracing::info!(
+        "Scanned {} files in {} directories: {} videos, {} samples, {} empty dirs",
+        result.total_files_scanned,
+        result.total_dirs_scanned,
+        result.videos.len(),
+        result.samples.len(),
+        result.empty_dirs.len()
+    );
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_is_video_extension() {
+        assert!(is_video_extension("mkv"));
+        assert!(is_video_extension("MKV"));
+        assert!(is_video_extension("mp4"));
+        assert!(is_video_extension("avi"));
+        assert!(!is_video_extension("txt"));
+        assert!(!is_video_extension("jpg"));
+        assert!(!is_video_extension("srt"));
+    }
+
+    #[test]
+    fn test_is_sample_path() {
+        assert!(is_sample_path(Path::new("/movies/Movie/Sample/video.mkv")));
+        assert!(is_sample_path(Path::new("/movies/Movie/sample/video.mkv")));
+        assert!(is_sample_path(Path::new("/movies/Movie/Samples/video.mkv")));
+        assert!(!is_sample_path(Path::new("/movies/Movie/video.mkv")));
+    }
+
+    #[test]
+    fn test_is_sample_filename() {
+        assert!(is_sample_filename("sample.mkv"));
+        assert!(is_sample_filename("Sample-movie.mkv"));
+        assert!(is_sample_filename("movie-sample.mkv"));
+        assert!(!is_sample_filename("movie.mkv"));
+        assert!(!is_sample_filename("sampler.mkv")); // Don't match "sampler"
+    }
+
+    #[test]
+    fn test_scan_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = scan_directory(temp_dir.path()).unwrap();
+        
+        assert_eq!(result.videos.len(), 0);
+        assert_eq!(result.samples.len(), 0);
+    }
+
+    #[test]
+    fn test_scan_with_video_files() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create a mock video file (just an empty file with video extension)
+        let video_path = temp_dir.path().join("movie.mkv");
+        fs::write(&video_path, "fake video content").unwrap();
+        
+        let result = scan_directory(temp_dir.path()).unwrap();
+        
+        assert_eq!(result.videos.len(), 1);
+        assert_eq!(result.videos[0].filename, "movie.mkv");
+        assert!(!result.videos[0].is_sample);
+    }
+
+    #[test]
+    fn test_scan_with_sample_folder() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create Sample folder with video
+        let sample_dir = temp_dir.path().join("Sample");
+        fs::create_dir(&sample_dir).unwrap();
+        fs::write(sample_dir.join("sample.mkv"), "fake sample").unwrap();
+        
+        // Create regular video
+        fs::write(temp_dir.path().join("movie.mkv"), "fake video").unwrap();
+        
+        let result = scan_directory(temp_dir.path()).unwrap();
+        
+        assert_eq!(result.videos.len(), 1);
+        assert_eq!(result.samples.len(), 1);
+        assert!(result.samples[0].is_sample);
+    }
+
+    #[test]
+    fn test_scan_nonexistent_path() {
+        let result = scan_directory(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+    }
+}
+
+

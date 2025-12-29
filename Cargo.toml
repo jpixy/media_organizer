@@ -1,0 +1,56 @@
+[package]
+name = "media_organizer"
+version = "0.1.0"
+edition = "2021"
+authors = ["jpixy"]
+description = "A CLI tool for organizing video files (movies and TV shows) using AI and TMDB"
+license = "MIT"
+repository = "https://github.com/jpixy/media_organizer"
+
+[dependencies]
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# File system
+walkdir = "2.4"
+
+# Progress and output
+indicatif = "0.17"
+colored = "2.1"
+
+# Crypto
+sha2 = "0.10"
+
+# Utils
+uuid = { version = "1.6", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.8"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Additional utilities
+urlencoding = "2.1"
+dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.9"
+
+[[bin]]
+name = "media-organizer"
+path = "src/main.rs"
