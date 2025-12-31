@@ -68,9 +68,25 @@ impl RollbackExecutor {
                 .progress_chars("█▓░"),
         );
 
-        for op in operations {
-            pb.set_message(format!("{:?}: {}", op.rollback.op, op.rollback.path.display()));
+        for (idx, op) in operations.iter().enumerate() {
+            let progress_msg = format!(
+                "[{}/{}] {:?}: {}",
+                idx + 1,
+                operations.len(),
+                op.rollback.op,
+                op.rollback.path.file_name().unwrap_or_default().to_string_lossy()
+            );
+            pb.set_message(progress_msg.clone());
             pb.inc(1);
+
+            // Log detailed info for each operation
+            tracing::info!(
+                "Rollback [{}/{}]: {:?} - {}",
+                idx + 1,
+                operations.len(),
+                op.rollback.op,
+                op.rollback.path.display()
+            );
 
             if dry_run {
                 println!(
@@ -86,8 +102,10 @@ impl RollbackExecutor {
             match self.execute_rollback_op(op) {
                 Ok(executed) => {
                     if executed {
+                        tracing::debug!("  ✓ Success");
                         result.success_count += 1;
                     } else {
+                        tracing::debug!("  ⊘ Skipped");
                         result.skip_count += 1;
                     }
                 }

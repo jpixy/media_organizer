@@ -78,7 +78,8 @@ pub fn generate_episode_filename(
     }
     parts.push(format!("-[{}]", sanitize_filename(&episode.name)));
 
-    // Video info
+    // Video info (including resolution)
+    parts.push(format!("-{}", video.resolution));
     parts.push(format!("-{}", video.format));
     parts.push(format!("-{}", video.video_codec));
     parts.push(format!("-{}bit", video.bit_depth));

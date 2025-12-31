@@ -42,7 +42,7 @@ pub fn generate_movie_folder(metadata: &MovieMetadata, edition: Option<&str>) ->
 
 /// Generate TV show folder name.
 ///
-/// Format: `[${showOriginalTitle}]-[${showTitle}]-${showImdb}-${showTmdb}`
+/// Format: `[${showOriginalTitle}][${showTitle}](${year})-${showImdb}-${showTmdb}`
 pub fn generate_tvshow_folder(metadata: &TvShowMetadata) -> String {
     let mut parts = Vec::new();
 
@@ -56,6 +56,9 @@ pub fn generate_tvshow_folder(metadata: &TvShowMetadata) -> String {
         parts.push(format!("[{}]", sanitize_filename(&metadata.original_name)));
         parts.push(format!("[{}]", sanitize_filename(&metadata.name)));
     }
+
+    // Add year
+    parts.push(format!("({})", metadata.year));
 
     // Add IMDB ID
     if let Some(ref imdb_id) = metadata.imdb_id {

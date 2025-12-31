@@ -141,8 +141,30 @@ pub fn generate_tvshow_nfo(show: &TvShowMetadata) -> String {
         escape_xml(&show.original_name)
     ));
 
-    // Year
+    // Year and premiere date
     nfo.push_str(&format!("  <year>{}</year>\n", show.year));
+    if let Some(ref date) = show.first_air_date {
+        nfo.push_str(&format!("  <premiered>{}</premiered>\n", date));
+    }
+
+    // Status and seasons/episodes
+    if let Some(ref status) = show.status {
+        nfo.push_str(&format!("  <status>{}</status>\n", escape_xml(status)));
+    }
+    nfo.push_str(&format!("  <season>{}</season>\n", show.number_of_seasons));
+    nfo.push_str(&format!("  <episode>{}</episode>\n", show.number_of_episodes));
+
+    // Ratings
+    if let Some(rating) = show.rating {
+        nfo.push_str("  <ratings>\n");
+        nfo.push_str("    <rating name=\"tmdb\" max=\"10\" default=\"true\">\n");
+        nfo.push_str(&format!("      <value>{:.1}</value>\n", rating));
+        if let Some(votes) = show.votes {
+            nfo.push_str(&format!("      <votes>{}</votes>\n", votes));
+        }
+        nfo.push_str("    </rating>\n");
+        nfo.push_str("  </ratings>\n");
+    }
 
     // IDs
     nfo.push_str(&format!(
@@ -156,9 +178,59 @@ pub fn generate_tvshow_nfo(show: &TvShowMetadata) -> String {
         ));
     }
 
-    // Overview
+    // Overview and tagline
     if let Some(ref overview) = show.overview {
         nfo.push_str(&format!("  <plot>{}</plot>\n", escape_xml(overview)));
+    }
+    if let Some(ref tagline) = show.tagline {
+        if !tagline.is_empty() {
+            nfo.push_str(&format!("  <tagline>{}</tagline>\n", escape_xml(tagline)));
+        }
+    }
+
+    // Genres
+    for genre in &show.genres {
+        nfo.push_str(&format!("  <genre>{}</genre>\n", escape_xml(genre)));
+    }
+
+    // Countries
+    for country in &show.countries {
+        nfo.push_str(&format!("  <country>{}</country>\n", escape_xml(country)));
+    }
+
+    // Networks/Studios
+    for network in &show.networks {
+        nfo.push_str(&format!("  <studio>{}</studio>\n", escape_xml(network)));
+    }
+
+    // Creators
+    for creator in &show.creators {
+        nfo.push_str(&format!("  <credits>{}</credits>\n", escape_xml(creator)));
+    }
+
+    // Actors
+    for actor in &show.actors {
+        nfo.push_str("  <actor>\n");
+        nfo.push_str(&format!("    <name>{}</name>\n", escape_xml(&actor.name)));
+        if let Some(ref role) = actor.role {
+            nfo.push_str(&format!("    <role>{}</role>\n", escape_xml(role)));
+        }
+        if let Some(order) = actor.order {
+            nfo.push_str(&format!("    <order>{}</order>\n", order));
+        }
+        nfo.push_str("  </actor>\n");
+    }
+
+    // Poster
+    if let Some(poster) = show.poster_urls.first() {
+        nfo.push_str(&format!("  <thumb aspect=\"poster\">{}</thumb>\n", poster));
+    }
+
+    // Fanart/Backdrop
+    if let Some(ref backdrop) = show.backdrop_url {
+        nfo.push_str("  <fanart>\n");
+        nfo.push_str(&format!("    <thumb>{}</thumb>\n", backdrop));
+        nfo.push_str("  </fanart>\n");
     }
 
     nfo.push_str("</tvshow>\n");

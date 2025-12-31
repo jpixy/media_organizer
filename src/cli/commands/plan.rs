@@ -87,10 +87,15 @@ async fn plan_media(
     println!("  {} {}", "Total operations:".bold(), total_ops);
     println!();
 
+    // Ensure target directory exists before saving plan
+    if !target_path.exists() {
+        std::fs::create_dir_all(&target_path)?;
+    }
+
     // Determine output path (prefer target directory)
     let output_path = match output {
         Some(o) => o.to_path_buf(),
-        None => planner::default_plan_path(source, target),
+        None => planner::default_plan_path(source, Some(&target_path)),
     };
 
     // Save plan

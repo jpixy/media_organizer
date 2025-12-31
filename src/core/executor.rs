@@ -97,6 +97,7 @@ impl Executor {
         );
 
         // Execute operations for each item
+        let mut op_idx = 0;
         for item in &plan.items {
             if item.status != PlanItemStatus::Pending {
                 tracing::debug!("Skipping item {} with status {:?}", item.id, item.status);
@@ -104,8 +105,25 @@ impl Executor {
             }
 
             for op in &item.operations {
-                pb.set_message(format!("{:?}: {}", op.op, op.to.display()));
+                op_idx += 1;
+                let progress_msg = format!(
+                    "[{}/{}] {:?}: {}",
+                    op_idx,
+                    total_ops,
+                    op.op,
+                    op.to.file_name().unwrap_or_default().to_string_lossy()
+                );
+                pb.set_message(progress_msg);
                 pb.inc(1);
+
+                // Log detailed info for each operation
+                tracing::info!(
+                    "Execute [{}/{}]: {:?} - {}",
+                    op_idx,
+                    total_ops,
+                    op.op,
+                    op.to.display()
+                );
 
                 match self.execute_operation(op, item, plan).await {
                     Ok(rollback_op) => {
@@ -116,9 +134,11 @@ impl Executor {
                             rollback.operations.push(rb_op);
                         }
                         success_count += 1;
+                        tracing::debug!("  ✓ Success");
                     }
                     Err(e) => {
                         tracing::error!("Operation failed: {} - {}", op.to.display(), e);
+                        println!("{} {} - {}", "ERROR".red().bold(), op.to.display(), e);
                         error_count += 1;
                         // Continue with remaining operations
                     }
@@ -299,12 +319,31 @@ impl Executor {
                         }
                     }
                     Some(MediaType::TvShows) => {
-                        if let Some(ref metadata) = item.tvshow_metadata {
-                            nfo::generate_tvshow_nfo(metadata)
+                        // Check if this is tvshow.nfo (show-level) or episode.nfo
+                        let is_tvshow_nfo = path.file_name()
+                            .map(|n| n.to_string_lossy() == "tvshow.nfo")
+                            .unwrap_or(false);
+                        
+                        if is_tvshow_nfo {
+                            // Generate show-level NFO
+                            if let Some(ref show) = item.tvshow_metadata {
+                                nfo::generate_tvshow_nfo(show)
+                            } else {
+                                return Err(crate::Error::ExecuteError(
+                                    "Missing TV show metadata for NFO generation".to_string()
+                                ));
+                            }
                         } else {
-                            return Err(crate::Error::ExecuteError(
-                                "Missing TV show metadata for NFO generation".to_string()
-                            ));
+                            // Generate episode-level NFO
+                            if let (Some(ref show), Some(ref episode)) = (&item.tvshow_metadata, &item.episode_metadata) {
+                                nfo::generate_episode_nfo(show, episode)
+                            } else if let Some(ref show) = item.tvshow_metadata {
+                                nfo::generate_tvshow_nfo(show)
+                            } else {
+                                return Err(crate::Error::ExecuteError(
+                                    "Missing TV show metadata for NFO generation".to_string()
+                                ));
+                            }
                         }
                     }
                     None => {
@@ -320,6 +359,12 @@ impl Executor {
                 ));
             }
         };
+
+        // Skip if file already exists (for TV show NFO deduplication)
+        if path.exists() {
+            tracing::debug!("File already exists, skipping: {:?}", path);
+            return Ok(None);
+        }
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
@@ -354,6 +399,12 @@ impl Executor {
             crate::Error::ExecuteError("Download operation missing 'url'".to_string())
         })?;
         let path = &op.to;
+
+        // Skip if file already exists (optimization)
+        if path.exists() {
+            tracing::debug!("Poster already exists, skipping: {:?}", path);
+            return Ok(None);
+        }
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {

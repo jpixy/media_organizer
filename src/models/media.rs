@@ -20,6 +20,17 @@ impl std::fmt::Display for MediaType {
     }
 }
 
+/// Actor with role information.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Actor {
+    /// Actor name.
+    pub name: String,
+    /// Character/role name.
+    pub role: Option<String>,
+    /// Display order.
+    pub order: Option<u32>,
+}
+
 /// Video file information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoFile {
@@ -79,8 +90,10 @@ pub struct MovieMetadata {
     pub runtime: Option<u32>,
     /// Genres.
     pub genres: Vec<String>,
-    /// Production countries.
+    /// Production countries (names only).
     pub countries: Vec<String>,
+    /// Production country codes (ISO 3166-1, e.g., "CN", "US").
+    pub country_codes: Vec<String>,
     /// Production companies/studios.
     pub studios: Vec<String>,
     /// User rating (0-10).
@@ -118,10 +131,38 @@ pub struct TvShowMetadata {
     pub original_language: String,
     /// First air year.
     pub year: u16,
+    /// First air date.
+    pub first_air_date: Option<String>,
     /// Overview/synopsis.
     pub overview: Option<String>,
+    /// Tagline.
+    pub tagline: Option<String>,
+    /// Genres.
+    pub genres: Vec<String>,
+    /// Production countries (names only).
+    pub countries: Vec<String>,
+    /// Production country codes (ISO 3166-1, e.g., "CN", "US").
+    pub country_codes: Vec<String>,
+    /// Studios/Networks.
+    pub networks: Vec<String>,
+    /// Rating (0-10).
+    pub rating: Option<f32>,
+    /// Vote count.
+    pub votes: Option<u32>,
+    /// Number of seasons.
+    pub number_of_seasons: u16,
+    /// Number of episodes.
+    pub number_of_episodes: u16,
+    /// Status (Returning Series, Ended, etc.)
+    pub status: Option<String>,
+    /// Created by.
+    pub creators: Vec<String>,
+    /// Main cast with roles.
+    pub actors: Vec<Actor>,
     /// Poster URLs.
     pub poster_urls: Vec<String>,
+    /// Backdrop/fanart URL.
+    pub backdrop_url: Option<String>,
 }
 
 /// TMDB metadata for a TV episode.

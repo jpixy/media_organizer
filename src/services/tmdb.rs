@@ -54,6 +54,8 @@ pub struct MovieSearchItem {
     pub release_date: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+    pub vote_count: Option<u32>,
+    pub vote_average: Option<f32>,
 }
 
 /// Movie details.
@@ -147,11 +149,63 @@ pub struct TvDetails {
     pub original_language: String,
     pub first_air_date: Option<String>,
     pub overview: Option<String>,
+    pub tagline: Option<String>,
     pub poster_path: Option<String>,
     pub backdrop_path: Option<String>,
     pub number_of_seasons: u16,
     pub number_of_episodes: u16,
+    pub status: Option<String>,
+    pub vote_average: Option<f32>,
+    pub vote_count: Option<u32>,
+    pub genres: Option<Vec<TvGenre>>,
+    pub production_countries: Option<Vec<TvCountry>>,
+    pub networks: Option<Vec<TvNetwork>>,
+    pub created_by: Option<Vec<TvCreator>>,
+    pub credits: Option<TvCredits>,
     pub external_ids: Option<ExternalIds>,
+}
+
+/// TV Genre.
+#[derive(Debug, Deserialize)]
+pub struct TvGenre {
+    pub id: u64,
+    pub name: String,
+}
+
+/// TV Country.
+#[derive(Debug, Deserialize)]
+pub struct TvCountry {
+    pub iso_3166_1: String,
+    pub name: String,
+}
+
+/// TV Network.
+#[derive(Debug, Deserialize)]
+pub struct TvNetwork {
+    pub id: u64,
+    pub name: String,
+}
+
+/// TV Creator.
+#[derive(Debug, Deserialize)]
+pub struct TvCreator {
+    pub id: u64,
+    pub name: String,
+}
+
+/// TV Credits.
+#[derive(Debug, Deserialize)]
+pub struct TvCredits {
+    pub cast: Option<Vec<TvCast>>,
+}
+
+/// TV Cast member.
+#[derive(Debug, Deserialize)]
+pub struct TvCast {
+    pub id: u64,
+    pub name: String,
+    pub character: Option<String>,
+    pub order: Option<u32>,
 }
 
 /// External IDs for a TV show.
@@ -321,7 +375,7 @@ impl TmdbClient {
     pub async fn get_tv_details(&self, tv_id: u64) -> Result<TvDetails> {
         let url = self.build_url(
             &format!("tv/{}", tv_id),
-            "&append_to_response=external_ids"
+            "&append_to_response=external_ids,credits"
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)

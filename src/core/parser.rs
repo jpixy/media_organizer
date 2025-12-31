@@ -32,14 +32,44 @@ pub struct ParsedFilename {
 }
 
 /// AI response structure for parsing.
+/// Uses serde_json::Value for season/episode to handle both string ("S01") and number (1) formats.
 #[derive(Debug, Deserialize)]
 struct AiParseResponse {
     original_title: Option<String>,
     title: Option<String>,
     year: Option<u16>,
-    season: Option<u16>,
-    episode: Option<u16>,
+    season: Option<serde_json::Value>,
+    episode: Option<serde_json::Value>,
     confidence: Option<f32>,
+}
+
+impl AiParseResponse {
+    /// Parse season value from various formats: "S01", "1", 1, etc.
+    fn parse_season(&self) -> Option<u16> {
+        self.season.as_ref().and_then(|v| Self::parse_number(v))
+    }
+
+    /// Parse episode value from various formats: "E05", "5", 5, etc.
+    fn parse_episode(&self) -> Option<u16> {
+        self.episode.as_ref().and_then(|v| Self::parse_number(v))
+    }
+
+    /// Parse a number from various formats.
+    fn parse_number(value: &serde_json::Value) -> Option<u16> {
+        match value {
+            serde_json::Value::Number(n) => n.as_u64().map(|n| n as u16),
+            serde_json::Value::String(s) => {
+                // Try direct parse first
+                if let Ok(n) = s.parse::<u16>() {
+                    return Some(n);
+                }
+                // Try extracting number from "S01", "E05", etc.
+                let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+                digits.parse::<u16>().ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Parser configuration.
@@ -117,12 +147,13 @@ impl FilenameParser {
 - 忽略发布组名称（通常在方括号或末尾）
 - 如果文件名中包含中英文混合，请分别提取
 - 如果无法确定某个字段，返回null
-- 年份通常是4位数字，范围在1900-2030之间
+- **重要**: 年份必须是文件名中明确出现的4位数字(1900-2030)，不要猜测！如果文件名中没有年份，返回null
+- 例如："动物农场.mp4"没有年份，应返回null；"雏菊 导演剪辑版 2006.mp4"年份是2006
 - **重要**: 续集编号（如2、3、II、III）是标题的一部分！例如"刺杀小说家2"的标题是"刺杀小说家2"而不是"刺杀小说家"
 - **重要**: 不要把紧跟在标题后面的数字当作分辨率。例如"刺杀小说家2.4k.mp4"中，"2"是续集编号，"4k"才是分辨率
 - 常见续集模式：标题2、标题3、标题II、标题III、标题:副标题
 - **重要**: 版本信息不是标题的一部分！如"导演剪辑版"、"加长版"、"未删减版"、"特效版"、"IMAX版"、"3D版"等都不应包含在标题中
-- 例如："雏菊 导演剪辑版 2006.mp4" 的标题是"雏菊"，不是"雏菊 导演剪辑版"
+- 例如："雏菊 导演剪辑版 2006.mp4" 的标题是"雏菊"，年份是2006
 
 只返回JSON对象，不要包含其他文字：
 {{"original_title": "...", "title": "...", "year": ..., "season": ..., "episode": ..., "confidence": ...}}"#
@@ -167,12 +198,14 @@ impl FilenameParser {
                     raw_confidence
                 };
                 
+                let season = ai_response.parse_season();
+                let episode = ai_response.parse_episode();
                 Ok(ParsedFilename {
                     original_title: ai_response.original_title,
                     title: ai_response.title,
                     year: ai_response.year,
-                    season: ai_response.season,
-                    episode: ai_response.episode,
+                    season,
+                    episode,
                     confidence,
                     raw_response: Some(response.to_string()),
                 })
@@ -266,12 +299,14 @@ impl FilenameParser {
                                 raw_confidence
                             };
                             
+                            let season = ai_response.parse_season();
+                            let episode = ai_response.parse_episode();
                             Ok(ParsedFilename {
                                 original_title: ai_response.original_title,
                                 title: ai_response.title,
                                 year: ai_response.year,
-                                season: ai_response.season,
-                                episode: ai_response.episode,
+                                season,
+                                episode,
                                 confidence,
                                 raw_response: Some(response.response),
                             })
@@ -435,4 +470,100 @@ mod tests {
     }
 }
 
+/// Extract season and episode numbers from filename using regex.
+/// This avoids calling AI for each episode file.
+/// 
+/// Supports patterns like:
+/// - "01.mp4", "02.mp4" (just episode number)
+/// - "S01E01.mp4", "s01e05.mkv"
+/// - "E01.mp4", "E05.mkv"
+/// - "第01集.mp4", "第5集.mkv"
+/// - "01 4K.mp4" (episode with quality suffix)
+pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16>) {
+    // Remove extension
+    let name = filename
+        .rsplit('.')
+        .skip(1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(".");
+    
+    let name_lower = name.to_lowercase();
+    
+    // Pattern 1: S01E01, s01e05
+    if let Some(caps) = regex_match_sxxexx(&name_lower) {
+        return caps;
+    }
+    
+    // Pattern 2: Season 01 Episode 05
+    if let Some(caps) = regex_match_season_episode(&name_lower) {
+        return caps;
+    }
+    
+    // Pattern 3: E01, E05 (episode only)
+    if let Some(ep) = regex_match_exx(&name_lower) {
+        return (Some(1), Some(ep)); // Default to season 1
+    }
+    
+    // Pattern 4: 第01集, 第5集
+    if let Some(ep) = regex_match_chinese_episode(&name) {
+        return (Some(1), Some(ep)); // Default to season 1
+    }
+    
+    // Pattern 5: Just a number at the start (01, 02, 1, 2)
+    // Handle "01 4K.mp4", "02.mp4", etc.
+    if let Some(ep) = regex_match_leading_number(&name) {
+        return (Some(1), Some(ep)); // Default to season 1
+    }
+    
+    (None, None)
+}
 
+fn regex_match_sxxexx(s: &str) -> Option<(Option<u16>, Option<u16>)> {
+    // Match S01E01, s1e5, etc.
+    let re = regex::Regex::new(r"s(\d{1,2})e(\d{1,3})").ok()?;
+    let caps = re.captures(s)?;
+    let season: u16 = caps.get(1)?.as_str().parse().ok()?;
+    let episode: u16 = caps.get(2)?.as_str().parse().ok()?;
+    Some((Some(season), Some(episode)))
+}
+
+fn regex_match_season_episode(s: &str) -> Option<(Option<u16>, Option<u16>)> {
+    // Match "season 01 episode 05", "season1 episode5"
+    let re = regex::Regex::new(r"season\s*(\d{1,2}).*episode\s*(\d{1,3})").ok()?;
+    let caps = re.captures(s)?;
+    let season: u16 = caps.get(1)?.as_str().parse().ok()?;
+    let episode: u16 = caps.get(2)?.as_str().parse().ok()?;
+    Some((Some(season), Some(episode)))
+}
+
+fn regex_match_exx(s: &str) -> Option<u16> {
+    // Match E01, e5, EP01, ep05
+    let re = regex::Regex::new(r"(?:^|[^a-z])e[p]?(\d{1,3})(?:[^0-9]|$)").ok()?;
+    let caps = re.captures(s)?;
+    caps.get(1)?.as_str().parse().ok()
+}
+
+fn regex_match_chinese_episode(s: &str) -> Option<u16> {
+    // Match 第01集, 第5集
+    let re = regex::Regex::new(r"第(\d{1,3})集").ok()?;
+    let caps = re.captures(s)?;
+    caps.get(1)?.as_str().parse().ok()
+}
+
+fn regex_match_leading_number(s: &str) -> Option<u16> {
+    // Match numbers at the start: "01", "02", "1", "2"
+    // Also handles "01 4K", "02 1080p"
+    let trimmed = s.trim();
+    let re = regex::Regex::new(r"^(\d{1,3})(?:\s|$|[^0-9])").ok()?;
+    let caps = re.captures(trimmed)?;
+    let num: u16 = caps.get(1)?.as_str().parse().ok()?;
+    // Sanity check: episode numbers are usually 1-999
+    if num >= 1 && num <= 999 {
+        Some(num)
+    } else {
+        None
+    }
+}
