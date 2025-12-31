@@ -48,6 +48,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
 dirs = "5.0"
 regex = "1.10"
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3.9"

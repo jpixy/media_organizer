@@ -20,10 +20,16 @@ use crate::services::{ffprobe, tmdb::TmdbClient};
 use crate::Result;
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
+
+/// Cache for season episodes: (tmdb_id, season_number) -> Vec<EpisodeInfo>
+type SeasonEpisodesCache = Arc<RwLock<HashMap<(u64, u16), Vec<crate::services::tmdb::EpisodeInfo>>>>;
 
 /// Planner configuration.
 #[derive(Debug, Clone)]
@@ -130,10 +136,12 @@ impl Planner {
 
     /// Process video files: parse, query TMDB, extract metadata.
     /// 
-    /// NEW DESIGN: Process by top-level directory for better caching:
-    /// 1. Group videos by their top-level directory (relative to source)
-    /// 2. For each group, call AI + TMDB only ONCE
-    /// 3. Use regex to extract episode numbers for remaining files
+    /// OPTIMIZED DESIGN:
+    /// 1. Group videos by their parent directory
+    /// 2. For each group, call AI + TMDB only ONCE for show info
+    /// 3. Fetch entire season info once (not per episode)
+    /// 4. Use regex to extract episode numbers for individual files
+    /// 5. Run ffprobe in parallel (up to 8 concurrent)
     async fn process_videos(
         &self,
         videos: &[VideoFile],
@@ -148,13 +156,22 @@ impl Planner {
             return Ok((items, unknown));
         }
 
-        // Step 1: Group videos by top-level directory (relative to source)
+        // Step 1: Group videos by parent directory
         let groups = self.group_by_top_level_dir(videos, source);
         tracing::info!("Grouped {} videos into {} directories", videos.len(), groups.len());
 
-        // Cache for TV show metadata by top-level directory
-        let mut tvshow_cache: std::collections::HashMap<PathBuf, (TvShowMetadata, Option<EpisodeMetadata>)> = 
-            std::collections::HashMap::new();
+        // Caches
+        let mut tvshow_cache: HashMap<PathBuf, TvShowMetadata> = HashMap::new();
+        let season_episodes_cache: SeasonEpisodesCache = Arc::new(RwLock::new(HashMap::new()));
+
+        // Step 2: Run ffprobe in parallel for all videos (up to 8 concurrent)
+        tracing::info!("Extracting video metadata with ffprobe (parallel)...");
+        let ffprobe_results = self.parallel_ffprobe(videos).await;
+        let ffprobe_map: HashMap<PathBuf, VideoMetadata> = ffprobe_results
+            .into_iter()
+            .filter_map(|(path, result)| result.ok().map(|meta| (path, meta)))
+            .collect();
+        tracing::info!("FFprobe completed for {} files", ffprobe_map.len());
 
         // Create progress bar
         let pb = ProgressBar::new(videos.len() as u64);
@@ -165,32 +182,29 @@ impl Planner {
                 .progress_chars("█▓░"),
         );
 
-        // Step 2: Process each group
+        // Step 3: Process each group
         for (top_dir, group_videos) in &groups {
-            // Check if we already have cached metadata for this directory
-            let cached_show = if media_type == MediaType::TvShows {
-                tvshow_cache.get(top_dir).cloned()
-            } else {
-                None
-            };
+            let cached_show = tvshow_cache.get(top_dir).cloned();
 
-            // Process the first video with AI to get metadata (if not cached)
             let first_video = &group_videos[0];
             pb.set_message(format!("Processing: {} ({} files)", 
                 top_dir.file_name().unwrap_or_default().to_string_lossy(),
                 group_videos.len()
             ));
 
-            // For the first video (or if no cache), use AI parsing
-            let first_result = if cached_show.is_none() {
-                self.process_single_video_with_cache(first_video, target, media_type, None).await
-            } else {
-                self.process_single_video_with_cache(first_video, target, media_type, cached_show.as_ref()).await
-            };
+            // For the first video, use AI parsing to get show metadata
+            let first_result = self.process_single_video_optimized(
+                first_video,
+                target,
+                media_type,
+                cached_show.as_ref(),
+                &season_episodes_cache,
+                ffprobe_map.get(&first_video.path),
+            ).await;
 
             match first_result {
                 Ok(Some((item, show_meta))) => {
-                    // Cache the TV show metadata for this top-level directory
+                    // Cache the TV show metadata
                     if media_type == MediaType::TvShows {
                         if let Some(ref meta) = show_meta {
                             tvshow_cache.insert(top_dir.clone(), meta.clone());
@@ -199,12 +213,19 @@ impl Planner {
                     items.push(item);
                     pb.inc(1);
 
-                    // Now process remaining files in this group using cached metadata
+                    // Process remaining files using cached metadata
                     let cached = tvshow_cache.get(top_dir).cloned();
                     for video in group_videos.iter().skip(1) {
                         pb.set_message(format!("Processing: {}", &video.filename));
                         
-                        match self.process_single_video_with_cache(video, target, media_type, cached.as_ref()).await {
+                        match self.process_single_video_optimized(
+                            video,
+                            target,
+                            media_type,
+                            cached.as_ref(),
+                            &season_episodes_cache,
+                            ffprobe_map.get(&video.path),
+                        ).await {
                             Ok(Some((item, _))) => {
                                 items.push(item);
                             }
@@ -226,7 +247,6 @@ impl Planner {
                     }
                 }
                 Ok(None) => {
-                    // First video failed, mark all videos in this group as unknown
                     for video in group_videos {
                         unknown.push(UnknownItem {
                             source: video.clone(),
@@ -250,6 +270,244 @@ impl Planner {
 
         pb.finish_with_message("Done!");
         Ok((items, unknown))
+    }
+
+    /// Run ffprobe in parallel for multiple videos (up to 8 concurrent).
+    async fn parallel_ffprobe(&self, videos: &[VideoFile]) -> Vec<(PathBuf, Result<VideoMetadata>)> {
+        use futures::stream::{self, StreamExt};
+        
+        const CONCURRENT_LIMIT: usize = 8;
+        
+        let results: Vec<_> = stream::iter(videos)
+            .map(|video| {
+                let path = video.path.clone();
+                let filename = video.filename.clone();
+                async move {
+                    let ffprobe_result = ffprobe::extract_metadata(&path);
+                    let filename_meta = ffprobe::parse_metadata_from_filename(&filename);
+                    
+                    let result = match ffprobe_result {
+                        Ok(meta) => Ok(ffprobe::merge_metadata(meta, filename_meta)),
+                        Err(_) => Ok(filename_meta), // Fallback to filename-only metadata
+                    };
+                    (path, result)
+                }
+            })
+            .buffer_unordered(CONCURRENT_LIMIT)
+            .collect()
+            .await;
+        
+        results
+    }
+
+    /// Optimized video processing with season-level caching.
+    /// 
+    /// Key optimizations:
+    /// 1. Uses pre-computed ffprobe results
+    /// 2. Caches entire season info (one TMDB call per season, not per episode)
+    async fn process_single_video_optimized(
+        &self,
+        video: &VideoFile,
+        target: &Path,
+        media_type: MediaType,
+        cached_show: Option<&TvShowMetadata>,
+        season_cache: &SeasonEpisodesCache,
+        precomputed_ffprobe: Option<&VideoMetadata>,
+    ) -> Result<Option<(PlanItem, Option<TvShowMetadata>)>> {
+        // Step 1: Parse filename
+        let parsed = if media_type == MediaType::TvShows && cached_show.is_some() {
+            // FAST PATH: Extract episode from filename using regex
+            let (season, episode) = parser::extract_episode_from_filename(&video.filename);
+            if episode.is_none() {
+                tracing::debug!("Could not extract episode from: {}", video.filename);
+                return Ok(None);
+            }
+            ParsedFilename {
+                title: cached_show.map(|s| s.name.clone()),
+                original_title: cached_show.map(|s| s.original_name.clone()),
+                year: cached_show.map(|s| s.year),
+                season,
+                episode,
+                confidence: 1.0,
+                raw_response: Some("regex_extracted".to_string()),
+            }
+        } else {
+            // AI parsing for first video or movies
+            let parse_input = self.build_parse_input(video);
+            let parsed = self.parser.parse(&parse_input, media_type).await?;
+            if !self.parser.is_valid(&parsed) {
+                tracing::debug!("Low confidence parsing for: {}", video.filename);
+                return Ok(None);
+            }
+            parsed
+        };
+
+        // Step 2: Get metadata
+        let (movie_metadata, tvshow_metadata, episode_metadata) = match media_type {
+            MediaType::Movies => {
+                let movie = self.query_tmdb_movie(&parsed).await?;
+                if movie.is_none() {
+                    return Ok(None);
+                }
+                (movie, None, None)
+            }
+            MediaType::TvShows => {
+                if let Some(show_meta) = cached_show {
+                    // Use cached show, get episode from season cache
+                    let (season, episode) = (parsed.season.unwrap_or(1), parsed.episode.unwrap_or(1));
+                    let ep_meta = self.get_episode_from_cache(
+                        show_meta.tmdb_id,
+                        season,
+                        episode,
+                        season_cache,
+                    ).await;
+                    (None, Some(show_meta.clone()), ep_meta)
+                } else {
+                    // First video: get show info and cache season
+                    let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
+                    let (show, _) = self.query_tmdb_tvshow_with_folder(&parsed, folder_name.as_deref()).await?;
+                    if show.is_none() {
+                        return Ok(None);
+                    }
+                    let show_meta = show.unwrap();
+                    
+                    // Get episode info (with season caching)
+                    let (season, episode) = {
+                        let (s, e) = parser::extract_episode_from_filename(&video.filename);
+                        (s.or(parsed.season).unwrap_or(1), e.or(parsed.episode).unwrap_or(1))
+                    };
+                    let ep_meta = self.get_episode_from_cache(
+                        show_meta.tmdb_id,
+                        season,
+                        episode,
+                        season_cache,
+                    ).await;
+                    (None, Some(show_meta), ep_meta)
+                }
+            }
+        };
+
+        // Step 3: Get video metadata (use precomputed or fallback)
+        let video_metadata = match precomputed_ffprobe {
+            Some(meta) => meta.clone(),
+            None => {
+                let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                let filename_meta = ffprobe::parse_metadata_from_filename(&video.filename);
+                ffprobe::merge_metadata(ffprobe_meta, filename_meta)
+            }
+        };
+
+        // Step 4: Generate target info and operations
+        let tvshow_with_episode = tvshow_metadata.as_ref().map(|show| {
+            (show.clone(), episode_metadata.clone())
+        });
+        
+        let (target_info, operations) = self.generate_target_info(
+            video,
+            &movie_metadata,
+            &tvshow_with_episode,
+            &parsed,
+            &video_metadata,
+            target,
+            media_type,
+        )?;
+
+        let plan_item = PlanItem {
+            id: Uuid::new_v4().to_string(),
+            source: video.clone(),
+            parsed: ParsedInfo {
+                title: parsed.title.clone(),
+                original_title: parsed.original_title.clone(),
+                year: parsed.year,
+                confidence: parsed.confidence,
+                raw_response: parsed.raw_response.clone(),
+            },
+            movie_metadata: movie_metadata.clone(),
+            tvshow_metadata: tvshow_metadata.clone(),
+            episode_metadata: episode_metadata.clone(),
+            video_metadata: video_metadata.clone(),
+            target: target_info,
+            operations,
+            status: PlanItemStatus::Pending,
+        };
+
+        Ok(Some((plan_item, tvshow_metadata)))
+    }
+
+    /// Get episode info from season cache, fetching entire season if not cached.
+    async fn get_episode_from_cache(
+        &self,
+        tmdb_id: u64,
+        season: u16,
+        episode: u16,
+        cache: &SeasonEpisodesCache,
+    ) -> Option<EpisodeMetadata> {
+        let cache_key = (tmdb_id, season);
+        
+        // Check cache first
+        {
+            let read_cache = cache.read().await;
+            if let Some(episodes) = read_cache.get(&cache_key) {
+                // Find the episode in cached data
+                if let Some(ep_info) = episodes.iter().find(|e| e.episode_number == episode) {
+                    return Some(EpisodeMetadata {
+                        season_number: season,
+                        episode_number: episode,
+                        name: ep_info.name.clone(),
+                        original_name: None,
+                        air_date: ep_info.air_date.clone(),
+                        overview: ep_info.overview.clone(),
+                    });
+                }
+            }
+        }
+        
+        // Cache miss - fetch entire season
+        if let Some(client) = &self.tmdb_client {
+            match client.get_season_details(tmdb_id, season).await {
+                Ok(season_details) => {
+                    tracing::info!(
+                        "Cached season {} info ({} episodes) for TMDB ID {}",
+                        season,
+                        season_details.episodes.len(),
+                        tmdb_id
+                    );
+                    
+                    // Find the target episode first
+                    let target_ep = season_details.episodes.iter()
+                        .find(|e| e.episode_number == episode)
+                        .map(|ep_info| EpisodeMetadata {
+                            season_number: season,
+                            episode_number: episode,
+                            name: ep_info.name.clone(),
+                            original_name: None,
+                            air_date: ep_info.air_date.clone(),
+                            overview: ep_info.overview.clone(),
+                        });
+                    
+                    // Update cache
+                    {
+                        let mut write_cache = cache.write().await;
+                        write_cache.insert(cache_key, season_details.episodes);
+                    }
+                    
+                    return target_ep;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to fetch season {} details: {}", season, e);
+                }
+            }
+        }
+        
+        // Fallback: return basic episode info
+        Some(EpisodeMetadata {
+            season_number: season,
+            episode_number: episode,
+            name: format!("Episode {}", episode),
+            original_name: None,
+            air_date: None,
+            overview: None,
+        })
     }
 
     /// Group videos by their immediate parent directory.

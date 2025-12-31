@@ -4,7 +4,7 @@
 //! - mkdir: Create directories
 //! - move: Move video files
 //! - create: Generate NFO files
-//! - download: Download posters
+//! - download: Download posters (parallel)
 
 use crate::generators::nfo;
 use crate::models::media::MediaType;
@@ -14,10 +14,13 @@ use crate::utils::hash;
 use crate::Result;
 use chrono::Utc;
 use colored::Colorize;
+use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 /// Executor configuration.
@@ -61,7 +64,7 @@ impl Executor {
         }
     }
 
-    /// Execute a plan.
+    /// Execute a plan with optimized parallel downloads.
     pub async fn execute(&self, plan: &Plan) -> Result<Rollback> {
         println!("{}", "🚀 Executing plan...".bold().cyan());
         println!();
@@ -70,22 +73,41 @@ impl Executor {
         self.validate(plan)?;
 
         // Initialize rollback structure
-        let mut rollback = Rollback {
+        let rollback = Arc::new(Mutex::new(Rollback {
             version: "1.0".to_string(),
             plan_id: Uuid::new_v4().to_string(),
             executed_at: Utc::now().to_rfc3339(),
             operations: Vec::new(),
-        };
+        }));
 
-        let mut seq: u32 = 0;
+        let seq = Arc::new(Mutex::new(0u32));
         let mut success_count = 0;
         let mut error_count = 0;
 
-        // Calculate total operations
-        let total_ops: usize = plan.items.iter()
-            .filter(|i| i.status == PlanItemStatus::Pending)
-            .map(|i| i.operations.len())
-            .sum();
+        // Collect all operations, separating downloads for parallel execution
+        let mut non_download_ops: Vec<(&Operation, &PlanItem)> = Vec::new();
+        let mut download_ops: Vec<(&Operation, &PlanItem)> = Vec::new();
+
+        for item in &plan.items {
+            if item.status != PlanItemStatus::Pending {
+                continue;
+            }
+            for op in &item.operations {
+                if op.op == OperationType::Download {
+                    download_ops.push((op, item));
+                } else {
+                    non_download_ops.push((op, item));
+                }
+            }
+        }
+
+        let total_ops = non_download_ops.len() + download_ops.len();
+        tracing::info!(
+            "Executing {} operations ({} sequential, {} parallel downloads)",
+            total_ops,
+            non_download_ops.len(),
+            download_ops.len()
+        );
 
         // Create progress bar
         let pb = ProgressBar::new(total_ops as u64);
@@ -96,51 +118,85 @@ impl Executor {
                 .progress_chars("█▓░"),
         );
 
-        // Execute operations for each item
+        // Phase 1: Execute non-download operations sequentially
         let mut op_idx = 0;
-        for item in &plan.items {
-            if item.status != PlanItemStatus::Pending {
-                tracing::debug!("Skipping item {} with status {:?}", item.id, item.status);
-                continue;
-            }
+        for (op, item) in &non_download_ops {
+            op_idx += 1;
+            pb.set_message(format!(
+                "[{}/{}] {:?}: {}",
+                op_idx, total_ops, op.op,
+                op.to.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            pb.inc(1);
 
-            for op in &item.operations {
+            tracing::info!(
+                "Execute [{}/{}]: {:?} - {}",
+                op_idx, total_ops, op.op, op.to.display()
+            );
+
+            match self.execute_operation(op, item, plan).await {
+                Ok(rollback_op) => {
+                    if let Some(mut rb_op) = rollback_op {
+                        let mut seq_guard = seq.lock().await;
+                        *seq_guard += 1;
+                        rb_op.seq = *seq_guard;
+                        rb_op.executed = true;
+                        rollback.lock().await.operations.push(rb_op);
+                    }
+                    success_count += 1;
+                }
+                Err(e) => {
+                    tracing::error!("Operation failed: {} - {}", op.to.display(), e);
+                    error_count += 1;
+                }
+            }
+        }
+
+        // Phase 2: Execute downloads in parallel (up to 4 concurrent)
+        if !download_ops.is_empty() {
+            tracing::info!("Downloading {} posters in parallel...", download_ops.len());
+            
+            const DOWNLOAD_CONCURRENCY: usize = 4;
+            
+            let download_results: Vec<_> = stream::iter(download_ops.iter())
+                .map(|(op, _item)| {
+                    let client = &self.http_client;
+                    let op_to = op.to.clone();
+                    let op_url = op.url.clone();
+                    async move {
+                        let result = Self::execute_download_static(client, &op_url, &op_to).await;
+                        (op_to, result)
+                    }
+                })
+                .buffer_unordered(DOWNLOAD_CONCURRENCY)
+                .collect()
+                .await;
+
+            for (path, result) in download_results {
                 op_idx += 1;
-                let progress_msg = format!(
-                    "[{}/{}] {:?}: {}",
-                    op_idx,
-                    total_ops,
-                    op.op,
-                    op.to.file_name().unwrap_or_default().to_string_lossy()
-                );
-                pb.set_message(progress_msg);
+                pb.set_message(format!(
+                    "[{}/{}] Downloaded: {}",
+                    op_idx, total_ops,
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
                 pb.inc(1);
 
-                // Log detailed info for each operation
-                tracing::info!(
-                    "Execute [{}/{}]: {:?} - {}",
-                    op_idx,
-                    total_ops,
-                    op.op,
-                    op.to.display()
-                );
-
-                match self.execute_operation(op, item, plan).await {
-                    Ok(rollback_op) => {
-                        seq += 1;
-                        if let Some(mut rb_op) = rollback_op {
-                            rb_op.seq = seq;
-                            rb_op.executed = true;
-                            rollback.operations.push(rb_op);
-                        }
+                match result {
+                    Ok(Some(rb_op)) => {
+                        let mut seq_guard = seq.lock().await;
+                        *seq_guard += 1;
+                        let mut rb_op = rb_op;
+                        rb_op.seq = *seq_guard;
+                        rb_op.executed = true;
+                        rollback.lock().await.operations.push(rb_op);
                         success_count += 1;
-                        tracing::debug!("  ✓ Success");
+                    }
+                    Ok(None) => {
+                        success_count += 1; // Skipped (already exists)
                     }
                     Err(e) => {
-                        tracing::error!("Operation failed: {} - {}", op.to.display(), e);
-                        println!("{} {} - {}", "ERROR".red().bold(), op.to.display(), e);
+                        tracing::warn!("Download failed: {} - {}", path.display(), e);
                         error_count += 1;
-                        // Continue with remaining operations
                     }
                 }
             }
@@ -155,7 +211,65 @@ impl Executor {
         println!("  {} {}", "Failed operations:".bold(), error_count);
         println!();
 
-        Ok(rollback)
+        // Extract rollback from Arc<Mutex>
+        let final_rollback = Arc::try_unwrap(rollback)
+            .map_err(|_| crate::Error::ExecuteError("Failed to unwrap rollback".to_string()))?
+            .into_inner();
+
+        Ok(final_rollback)
+    }
+
+    /// Static download function for parallel execution.
+    async fn execute_download_static(
+        client: &reqwest::Client,
+        url: &Option<String>,
+        path: &Path,
+    ) -> Result<Option<RollbackOperation>> {
+        let url = url.as_ref().ok_or_else(|| {
+            crate::Error::ExecuteError("Download operation missing 'url'".to_string())
+        })?;
+
+        // Skip if file already exists
+        if path.exists() {
+            tracing::debug!("File already exists, skipping: {:?}", path);
+            return Ok(None);
+        }
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Download file
+        let response = client.get(url).send().await?;
+        if !response.status().is_success() {
+            return Err(crate::Error::ExecuteError(format!(
+                "Download failed with status: {}",
+                response.status()
+            )));
+        }
+
+        let bytes = response.bytes().await?;
+        let mut file = fs::File::create(path)?;
+        file.write_all(&bytes)?;
+
+        tracing::debug!("Downloaded: {:?}", path);
+
+        Ok(Some(RollbackOperation {
+            seq: 0,
+            op_type: RollbackOpType::Download,
+            from: path.to_path_buf(),
+            to: path.to_path_buf(),
+            checksum: None,
+            rollback: RollbackAction {
+                op: RollbackActionType::Delete,
+                path: path.to_path_buf(),
+                to: None,
+            },
+            executed: false,
+        }))
     }
 
     /// Validate a plan before execution.
