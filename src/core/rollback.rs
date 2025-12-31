@@ -31,16 +31,16 @@ impl RollbackExecutor {
     /// Execute a rollback.
     pub async fn execute(&self, rollback: &Rollback, dry_run: bool) -> Result<RollbackResult> {
         if dry_run {
-            println!("{}", "🔍 Dry run - no changes will be made".bold().yellow());
+            println!("{}", "[DRY-RUN] No changes will be made".bold().yellow());
         } else {
-            println!("{}", "⏪ Executing rollback...".bold().cyan());
+            println!("{}", "[ROLLBACK] Executing rollback...".bold().cyan());
         }
         println!();
 
         // Check for conflicts first
         let conflicts = self.check_conflicts(rollback)?;
         if !conflicts.is_empty() {
-            println!("{}", "⚠️  Conflicts detected:".bold().yellow());
+            println!("{}", "[WARNING] Conflicts detected:".bold().yellow());
             for conflict in &conflicts {
                 println!("  - {}", conflict);
             }
@@ -65,7 +65,7 @@ impl RollbackExecutor {
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
                 .unwrap()
-                .progress_chars("█▓░"),
+                .progress_chars("=>-"),
         );
 
         for (idx, op) in operations.iter().enumerate() {
@@ -102,10 +102,10 @@ impl RollbackExecutor {
             match self.execute_rollback_op(op) {
                 Ok(executed) => {
                     if executed {
-                        tracing::debug!("  ✓ Success");
+                        tracing::debug!("  [OK] Success");
                         result.success_count += 1;
                     } else {
-                        tracing::debug!("  ⊘ Skipped");
+                        tracing::debug!("  [SKIP] Skipped");
                         result.skip_count += 1;
                     }
                 }
@@ -279,14 +279,14 @@ impl RollbackResult {
 
     /// Print summary.
     pub fn print_summary(&self) {
-        println!("{}", "📊 Rollback Summary".bold().green());
+        println!("{}", "[Rollback Summary]".bold().green());
         println!("  {} {}", "Successful:".bold(), self.success_count);
         println!("  {} {}", "Skipped:".bold(), self.skip_count);
         println!("  {} {}", "Failed:".bold(), self.error_count);
 
         if !self.errors.is_empty() {
             println!();
-            println!("{}", "❌ Errors:".bold().red());
+            println!("{}", "[ERRORS]:".bold().red());
             for error in &self.errors {
                 println!("  - {}", error);
             }

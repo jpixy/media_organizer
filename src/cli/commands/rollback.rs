@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Execute a rollback.
 pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
-    println!("{}", "⏪ Rollback command".bold().cyan());
+    println!("{}", "[ROLLBACK] Rollback command".bold().cyan());
     println!();
 
     // Validate rollback file exists
@@ -19,7 +19,7 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
     }
 
     // Load rollback
-    println!("📖 Loading rollback: {}", rollback_file.display());
+    println!("[INFO] Loading rollback: {}", rollback_file.display());
     let rb = rollback::load_rollback(rollback_file)?;
 
     // Print rollback info
@@ -29,10 +29,10 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
     println!();
 
     if dry_run {
-        println!("{}", "🔍 Dry run mode - showing what would be done:".bold().yellow());
+        println!("{}", "[DRY-RUN] Showing what would be done:".bold().yellow());
         println!();
     } else {
-        println!("{}", "⚠️  This will reverse all previous operations!".bold().yellow());
+        println!("{}", "[WARNING] This will reverse all previous operations!".bold().yellow());
         println!();
     }
 
@@ -46,12 +46,12 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
 
     if result.is_success() {
         if dry_run {
-            println!("{}", "✅ Dry run complete - no changes were made".green());
+            println!("{}", "[OK] Dry run complete - no changes were made".green());
         } else {
-            println!("{}", "✅ Rollback completed successfully!".green());
+            println!("{}", "[OK] Rollback completed successfully!".green());
         }
     } else {
-        println!("{}", "⚠️  Rollback completed with errors".yellow());
+        println!("{}", "[WARNING] Rollback completed with errors".yellow());
     }
 
     Ok(())

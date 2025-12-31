@@ -31,6 +31,38 @@ use uuid::Uuid;
 /// Cache for season episodes: (tmdb_id, season_number) -> Vec<EpisodeInfo>
 type SeasonEpisodesCache = Arc<RwLock<HashMap<(u64, u16), Vec<crate::services::tmdb::EpisodeInfo>>>>;
 
+/// Convert ISO 3166-1 country code to country name.
+fn country_code_to_name(code: &str) -> String {
+    match code.to_uppercase().as_str() {
+        "US" => "United States".to_string(),
+        "GB" => "United Kingdom".to_string(),
+        "KR" => "South Korea".to_string(),
+        "JP" => "Japan".to_string(),
+        "CN" => "China".to_string(),
+        "TW" => "Taiwan".to_string(),
+        "HK" => "Hong Kong".to_string(),
+        "FR" => "France".to_string(),
+        "DE" => "Germany".to_string(),
+        "ES" => "Spain".to_string(),
+        "IT" => "Italy".to_string(),
+        "CA" => "Canada".to_string(),
+        "AU" => "Australia".to_string(),
+        "NZ" => "New Zealand".to_string(),
+        "IN" => "India".to_string(),
+        "TH" => "Thailand".to_string(),
+        "BR" => "Brazil".to_string(),
+        "MX" => "Mexico".to_string(),
+        "RU" => "Russia".to_string(),
+        "PL" => "Poland".to_string(),
+        "NL" => "Netherlands".to_string(),
+        "SE" => "Sweden".to_string(),
+        "NO" => "Norway".to_string(),
+        "DK" => "Denmark".to_string(),
+        "FI" => "Finland".to_string(),
+        _ => code.to_uppercase(),  // Fall back to code if unknown
+    }
+}
+
 /// Planner configuration.
 #[derive(Debug, Clone)]
 pub struct PlannerConfig {
@@ -47,7 +79,7 @@ pub struct PlannerConfig {
 impl Default for PlannerConfig {
     fn default() -> Self {
         Self {
-            min_confidence: 0.5,
+            min_confidence: 0.7,  // Higher threshold: prefer skipping over wrong matches
             download_posters: true,
             poster_size: "w500".to_string(),
             generate_nfo: true,
@@ -95,7 +127,7 @@ impl Planner {
         tracing::info!("Media type: {}", media_type);
 
         // Step 1: Scan directory
-        println!("📁 Scanning directory...");
+        println!("[INFO] Scanning directory...");
         let scan_result = scan_directory(source)?;
         println!(
             "   Found {} videos, {} samples",
@@ -179,7 +211,7 @@ impl Planner {
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
                 .unwrap()
-                .progress_chars("█▓░"),
+                .progress_chars("=>-"),
         );
 
         // Step 3: Process each group
@@ -317,11 +349,27 @@ impl Planner {
         // Step 1: Parse filename
         let parsed = if media_type == MediaType::TvShows && cached_show.is_some() {
             // FAST PATH: Extract episode from filename using regex
-            let (season, episode) = parser::extract_episode_from_filename(&video.filename);
+            let (mut season, episode) = parser::extract_episode_from_filename(&video.filename);
             if episode.is_none() {
                 tracing::debug!("Could not extract episode from: {}", video.filename);
                 return Ok(None);
             }
+            
+            // Try to extract season from parent directory name (e.g., "第一季", "Season 01")
+            if season.is_none() || season == Some(1) {
+                let parent_name = video.parent_dir.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if let Some(dir_season) = parser::extract_season_from_dirname(parent_name) {
+                    tracing::debug!(
+                        "Extracted season {} from directory: {}",
+                        dir_season,
+                        parent_name
+                    );
+                    season = Some(dir_season);
+                }
+            }
+            
             ParsedFilename {
                 title: cached_show.map(|s| s.name.clone()),
                 original_title: cached_show.map(|s| s.original_name.clone()),
@@ -373,7 +421,16 @@ impl Planner {
                     
                     // Get episode info (with season caching)
                     let (season, episode) = {
-                        let (s, e) = parser::extract_episode_from_filename(&video.filename);
+                        let (mut s, e) = parser::extract_episode_from_filename(&video.filename);
+                        // Try to extract season from parent directory
+                        if s.is_none() || s == Some(1) {
+                            let parent_name = video.parent_dir.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("");
+                            if let Some(dir_s) = parser::extract_season_from_dirname(parent_name) {
+                                s = Some(dir_s);
+                            }
+                        }
                         (s.or(parsed.season).unwrap_or(1), e.or(parsed.episode).unwrap_or(1))
                     };
                     let ep_meta = self.get_episode_from_cache(
@@ -402,7 +459,7 @@ impl Planner {
             (show.clone(), episode_metadata.clone())
         });
         
-        let (target_info, operations) = self.generate_target_info(
+        let (target_info, operations) = match self.generate_target_info(
             video,
             &movie_metadata,
             &tvshow_with_episode,
@@ -410,7 +467,10 @@ impl Planner {
             &video_metadata,
             target,
             media_type,
-        )?;
+        )? {
+            Some(result) => result,
+            None => return Ok(None), // Skip: cannot determine country
+        };
 
         let plan_item = PlanItem {
             id: Uuid::new_v4().to_string(),
@@ -513,9 +573,9 @@ impl Planner {
     /// Group videos by their immediate parent directory.
     /// 
     /// This is the correct grouping for TV shows:
-    /// - /Videos/TV_Shows/黑盒子/01.mp4 → parent_dir: /Videos/TV_Shows/黑盒子
-    /// - /Videos/TV_Shows/赵露思合集/后浪/01.mp4 → parent_dir: /Videos/TV_Shows/赵露思合集/后浪
-    /// - /Videos/TV_Shows/赵露思合集/陈芊芊/01.mp4 → parent_dir: /Videos/TV_Shows/赵露思合集/陈芊芊
+    /// - /Videos/TV_Shows/Show1/01.mp4 -> parent_dir: /Videos/TV_Shows/Show1
+    /// - /Videos/TV_Shows/Collection/ShowA/01.mp4 -> parent_dir: /Videos/TV_Shows/Collection/ShowA
+    /// - /Videos/TV_Shows/Collection/ShowB/01.mp4 -> parent_dir: /Videos/TV_Shows/Collection/ShowB
     /// 
     /// Each parent directory represents a single TV show/season.
     fn group_by_top_level_dir(
@@ -539,6 +599,7 @@ impl Planner {
     /// 
     /// OPTIMIZATION: For TV shows with cached metadata, we extract episode numbers
     /// from filename using regex instead of calling AI for each file.
+    #[allow(dead_code)]
     async fn process_single_video_with_cache(
         &self,
         video: &VideoFile,
@@ -652,7 +713,16 @@ impl Planner {
                     
                     // If episode is None (AI didn't parse season/episode), try regex extraction
                     if episode.is_none() {
-                        let (regex_season, regex_ep) = parser::extract_episode_from_filename(&video.filename);
+                        let (mut regex_season, regex_ep) = parser::extract_episode_from_filename(&video.filename);
+                        // Try to get season from parent directory name
+                        if regex_season.is_none() || regex_season == Some(1) {
+                            let parent_name = video.parent_dir.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("");
+                            if let Some(dir_s) = parser::extract_season_from_dirname(parent_name) {
+                                regex_season = Some(dir_s);
+                            }
+                        }
                         tracing::debug!(
                             "Regex extraction for first file {}: S{:?}E{:?}",
                             video.filename,
@@ -710,7 +780,7 @@ impl Planner {
         );
 
         // Step 4: Generate target paths
-        let (target_info, operations) = self.generate_target_info(
+        let (target_info, operations) = match self.generate_target_info(
             video,
             &movie_metadata,
             &tvshow_metadata,
@@ -718,7 +788,10 @@ impl Planner {
             &video_metadata,
             target,
             media_type,
-        )?;
+        )? {
+            Some(result) => result,
+            None => return Ok(None), // Skip: cannot determine country
+        };
 
         // Step 5: Create plan item
         let item = PlanItem {
@@ -930,7 +1003,8 @@ impl Planner {
     /// which should match "破坏不在场证明 特别篇" on TMDB.
     fn add_shortened_queries(&self, queries: &mut Vec<String>, title: &str) {
         // Split by common delimiters
-        let delimiters = [" - ", " – ", "：", ":", " 钟", " 与", " 和"];
+        // Common delimiters for splitting long titles (ASCII only for compatibility)
+        let delimiters = [" - ", ":", " "];
         
         for delim in delimiters {
             if let Some(pos) = title.find(delim) {
@@ -959,12 +1033,43 @@ impl Planner {
     fn is_minimal_filename(&self, filename: &str) -> bool {
         let name = filename.to_lowercase();
         
-        // Simple check: if filename is very short or mostly numbers/common identifiers
-        let name_without_ext = name.rsplit('.').skip(1).collect::<Vec<_>>().join(".");
+        // Remove extension
+        let name_without_ext = if let Some(pos) = name.rfind('.') {
+            &name[..pos]
+        } else {
+            &name
+        };
+        
+        // Count meaningful characters (excluding common technical terms)
         let alphanumeric_count = name_without_ext.chars().filter(|c| c.is_alphanumeric()).count();
         
         // If the meaningful part is very short, consider it minimal
         if alphanumeric_count <= 8 {
+            return true;
+        }
+        
+        // Check if filename is mostly technical info (codec, resolution, release group)
+        // Pattern: "11.4K.H265.AAC-YYDS" - starts with episode number followed by tech info
+        let tech_terms = ["4k", "1080p", "720p", "2160p", "h264", "h265", "hevc", "x264", "x265", 
+                         "aac", "dts", "ac3", "flac", "web-dl", "webrip", "bluray", "bdrip",
+                         "hdtv", "dvdrip", "remux", "hdr", "10bit", "8bit"];
+        
+        let parts: Vec<&str> = name_without_ext.split(|c: char| c == '.' || c == '-' || c == '_' || c == ' ').collect();
+        
+        // Check if first part is just a number (episode number)
+        let first_is_number = parts.first()
+            .map(|p| p.chars().all(|c| c.is_ascii_digit()) && p.len() <= 3)
+            .unwrap_or(false);
+        
+        // Count how many parts are technical terms
+        let tech_count = parts.iter()
+            .skip(if first_is_number { 1 } else { 0 })
+            .filter(|p| tech_terms.iter().any(|t| p.contains(t)) || p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
+            .count();
+        
+        // If most parts are technical or release group names, this is minimal
+        if first_is_number && tech_count >= parts.len().saturating_sub(2) {
+            tracing::debug!("Filename '{}' detected as minimal (tech-only)", filename);
             return true;
         }
         
@@ -1034,34 +1139,37 @@ impl Planner {
             
             if !common.is_empty() {
                 let query = english_title.as_deref().unwrap_or("");
-                let best = self.select_best_movie_match_ref(&common, query);
-                tracing::info!(
-                    "TMDB found (common match): {} - matches both '{}' and '{}'",
-                    best.title,
-                    chinese_title.as_deref().unwrap_or(""),
-                    english_title.as_deref().unwrap_or("")
-                );
-                return self.get_movie_details(client, best.id).await;
+                if let Some(best) = self.select_best_movie_match_ref(&common, query) {
+                    tracing::info!(
+                        "TMDB found (common match): {} - matches both '{}' and '{}'",
+                        best.title,
+                        chinese_title.as_deref().unwrap_or(""),
+                        english_title.as_deref().unwrap_or("")
+                    );
+                    return self.get_movie_details(client, best.id).await;
+                }
             }
         }
 
         // Priority 2: English title results (more reliable for international movies)
         if !english_results.is_empty() {
             let query = english_title.as_deref().unwrap_or("");
-            let best = self.select_best_movie_match(&english_results, query);
-            if self.is_reasonable_match(query, &best.title, &best.original_title) {
-                tracing::info!("TMDB found (English match): {}", best.title);
-                return self.get_movie_details(client, best.id).await;
+            if let Some(best) = self.select_best_movie_match(&english_results, query) {
+                if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                    tracing::info!("TMDB found (English match): {}", best.title);
+                    return self.get_movie_details(client, best.id).await;
+                }
             }
         }
 
         // Priority 3: Chinese title results
         if !chinese_results.is_empty() {
             let query = chinese_title.as_deref().unwrap_or("");
-            let best = self.select_best_movie_match(&chinese_results, query);
-            if self.is_reasonable_match(query, &best.title, &best.original_title) {
-                tracing::info!("TMDB found (Chinese match): {}", best.title);
-                return self.get_movie_details(client, best.id).await;
+            if let Some(best) = self.select_best_movie_match(&chinese_results, query) {
+                if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                    tracing::info!("TMDB found (Chinese match): {}", best.title);
+                    return self.get_movie_details(client, best.id).await;
+                }
             }
         }
 
@@ -1073,10 +1181,11 @@ impl Planner {
             for query in &shortened_queries {
                 let results = client.search_movie(query, parsed.year).await?;
                 if !results.is_empty() {
-                    let best = self.select_best_movie_match(&results, query);
-                    if self.is_reasonable_match(query, &best.title, &best.original_title) {
-                        tracing::info!("TMDB found (shortened query): {}", best.title);
-                        return self.get_movie_details(client, best.id).await;
+                    if let Some(best) = self.select_best_movie_match(&results, query) {
+                        if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                            tracing::info!("TMDB found (shortened query): {}", best.title);
+                            return self.get_movie_details(client, best.id).await;
+                        }
                     }
                 }
             }
@@ -1090,17 +1199,17 @@ impl Planner {
     }
 
     /// Select best movie match from a slice of references.
+    /// Returns None if match is ambiguous.
     fn select_best_movie_match_ref<'a>(
         &self,
         results: &[&'a crate::services::tmdb::MovieSearchItem],
         query_title: &str,
-    ) -> &'a crate::services::tmdb::MovieSearchItem {
+    ) -> Option<&'a crate::services::tmdb::MovieSearchItem> {
         use chrono::Datelike;
         let current_year = chrono::Utc::now().year() as u16;
         let query_normalized = self.normalize_title(query_title);
 
-        let mut best_idx = 0;
-        let mut best_score: i64 = -1;
+        let mut scored_results: Vec<(usize, i64, bool)> = Vec::new(); // (idx, score, is_exact)
 
         for (i, movie) in results.iter().enumerate() {
             let year: u16 = movie
@@ -1122,19 +1231,37 @@ impl Planner {
             let title_normalized = self.normalize_title(&movie.title);
             let original_normalized = self.normalize_title(&movie.original_title);
 
-            if title_normalized == query_normalized || original_normalized == query_normalized {
+            let is_exact = title_normalized == query_normalized || original_normalized == query_normalized;
+            if is_exact {
                 score += 10000;
             } else if title_normalized.contains(&query_normalized) || original_normalized.contains(&query_normalized) {
                 score += 1000;
             }
 
-            if score > best_score {
-                best_score = score;
-                best_idx = i;
+            scored_results.push((i, score, is_exact));
+        }
+
+        if scored_results.is_empty() {
+            return None;
+        }
+
+        scored_results.sort_by(|a, b| b.1.cmp(&a.1));
+        let (best_idx, best_score, best_exact) = scored_results[0];
+
+        // Ambiguity check for non-exact matches
+        if !best_exact && scored_results.len() > 1 {
+            let (_, second_score, _) = scored_results[1];
+            if best_score - second_score < 1000 {
+                tracing::warn!(
+                    "Ambiguous movie match (ref): '{}' vs '{}' - skipping",
+                    results[best_idx].title,
+                    results[scored_results[1].0].title
+                );
+                return None;
             }
         }
 
-        results[best_idx]
+        Some(results[best_idx])
     }
 
     /// Check if the TMDB match is reasonable (title similarity).
@@ -1166,6 +1293,7 @@ impl Planner {
     }
 
     /// Query TMDB for TV show metadata.
+    #[allow(dead_code)]
     async fn query_tmdb_tvshow(
         &self,
         parsed: &ParsedFilename,
@@ -1319,6 +1447,8 @@ impl Planner {
 
     /// Select the best TV show match from search results.
     /// Prioritizes: exact match > shorter prefix match > contains match
+    /// Returns None if match is ambiguous (multiple candidates with similar scores).
+    /// Principle: prefer skipping over wrong match.
     fn select_best_tv_match<'a>(
         &self,
         query: &str,
@@ -1329,8 +1459,7 @@ impl Planner {
         }
 
         let query_lower = query.to_lowercase();
-        let mut best_idx = 0;
-        let mut best_score: i32 = -1;
+        let mut scored_results: Vec<(usize, i32)> = Vec::new();
 
         for (i, show) in results.iter().enumerate() {
             let name_lower = show.name.to_lowercase();
@@ -1377,22 +1506,69 @@ impl Planner {
                 score
             );
 
-            if score > best_score {
-                best_score = score;
-                best_idx = i;
+            scored_results.push((i, score));
+        }
+
+        if scored_results.is_empty() {
+            return None;
+        }
+
+        // Sort by score descending
+        scored_results.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let (best_idx, best_score) = scored_results[0];
+
+        // AMBIGUITY CHECK: If there are multiple candidates with the same score tier,
+        // the match is ambiguous - skip rather than risk wrong match.
+        // Score tiers: 1000 (exact), 400-500 (prefix/contains), <100 (weak)
+        if scored_results.len() > 1 {
+            let (_, second_score) = scored_results[1];
+            
+            // Check if both are in the same score tier (within 100 points)
+            // OR if best is not an exact match and second is close
+            let is_ambiguous = if best_score >= 1000 {
+                // Exact match is unambiguous
+                false
+            } else if best_score >= 400 && second_score >= 400 {
+                // Both are prefix/contains matches - ambiguous!
+                tracing::warn!(
+                    "Ambiguous TV match: '{}' (score {}) vs '{}' (score {}) - skipping",
+                    results[best_idx].name, best_score,
+                    results[scored_results[1].0].name, second_score
+                );
+                true
+            } else if best_score - second_score < 100 && best_score < 500 {
+                // Scores too close and not high enough - ambiguous
+                tracing::warn!(
+                    "Ambiguous TV match (close scores): '{}' ({}) vs '{}' ({}) - skipping",
+                    results[best_idx].name, best_score,
+                    results[scored_results[1].0].name, second_score
+                );
+                true
+            } else {
+                false
+            };
+
+            if is_ambiguous {
+                return None;
             }
         }
 
-        if best_score >= 0 {
-            tracing::debug!(
-                "Selected best TV match: {} (score: {})",
-                results[best_idx].name,
-                best_score
+        // Require a minimum score for confidence
+        if best_score < 100 {
+            tracing::warn!(
+                "TV match score too low: '{}' (score {}) - skipping",
+                results[best_idx].name, best_score
             );
-            Some(&results[best_idx])
-        } else {
-            None
+            return None;
         }
+
+        tracing::debug!(
+            "Selected best TV match: {} (score: {})",
+            results[best_idx].name,
+            best_score
+        );
+        Some(&results[best_idx])
     }
 
     /// Get TV show details from TMDB.
@@ -1429,17 +1605,29 @@ impl Planner {
             .map(|g| g.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
-        // Extract countries
-        let countries = details.production_countries
-            .as_ref()
-            .map(|c| c.iter().map(|x| x.name.clone()).collect())
-            .unwrap_or_default();
-
-        // Extract country codes (ISO 3166-1)
-        let country_codes = details.production_countries
-            .as_ref()
-            .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
-            .unwrap_or_default();
+        // Extract countries - use production_countries first, then origin_country as fallback
+        let (countries, country_codes) = if let Some(ref pc) = details.production_countries {
+            if !pc.is_empty() {
+                (
+                    pc.iter().map(|x| x.name.clone()).collect(),
+                    pc.iter().map(|x| x.iso_3166_1.clone()).collect(),
+                )
+            } else if let Some(ref oc) = details.origin_country {
+                // Use origin_country as fallback (only has codes, map to country names)
+                let codes: Vec<String> = oc.clone();
+                let names: Vec<String> = oc.iter().map(|c| country_code_to_name(c)).collect();
+                (names, codes)
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        } else if let Some(ref oc) = details.origin_country {
+            // Use origin_country as fallback
+            let codes: Vec<String> = oc.clone();
+            let names: Vec<String> = oc.iter().map(|c| country_code_to_name(c)).collect();
+            (names, codes)
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         // Extract networks
         let networks = details.networks
@@ -1528,20 +1716,21 @@ impl Planner {
 
     /// Select the best movie match from search results.
     /// Prioritizes: 1) exact title match, 2) already released movies with most votes.
+    /// Returns None if match is ambiguous or uncertain.
+    /// Principle: prefer skipping over wrong match.
     fn select_best_movie_match<'a>(
         &self,
         results: &'a [crate::services::tmdb::MovieSearchItem],
         query_title: &str,
-    ) -> &'a crate::services::tmdb::MovieSearchItem {
+    ) -> Option<&'a crate::services::tmdb::MovieSearchItem> {
         use chrono::Datelike;
         let current_year = chrono::Utc::now().year() as u16;
         
         // Normalize query title for comparison
         let query_normalized = self.normalize_title(query_title);
 
-        // Filter out future movies and find the best match
-        let mut best_idx = 0;
-        let mut best_score: i64 = -1;
+        // Calculate scores for all valid candidates
+        let mut scored_results: Vec<(usize, i64, bool)> = Vec::new(); // (idx, score, is_exact)
 
         for (i, movie) in results.iter().enumerate() {
             // Extract year from release_date
@@ -1553,7 +1742,6 @@ impl Planner {
                 .unwrap_or(0);
 
             // Skip future movies (year > current year + 1)
-            // Allow movies releasing next year (pre-release content is common)
             if year > current_year + 1 {
                 tracing::debug!(
                     "Skipping far future movie: {} ({})",
@@ -1570,10 +1758,7 @@ impl Planner {
             let exact_match = title_normalized == query_normalized 
                 || orig_title_normalized == query_normalized;
             
-            // Score calculation:
-            // - Exact match: +100000 (highest priority)
-            // - Vote count: up to ~10000 for popular movies
-            // - Valid date: +100
+            // Score calculation
             let exact_match_bonus: i64 = if exact_match { 100000 } else { 0 };
             let vote_count = movie.vote_count.unwrap_or(0) as i64;
             let date_bonus: i64 = if year > 0 { 100 } else { 0 };
@@ -1585,19 +1770,55 @@ impl Planner {
                 movie.title, year, vote_count, exact_match, score
             );
 
-            if score > best_score {
-                best_score = score;
-                best_idx = i;
+            scored_results.push((i, score, exact_match));
+        }
+
+        if scored_results.is_empty() {
+            return None;
+        }
+
+        // Sort by score descending
+        scored_results.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let (best_idx, best_score, best_exact) = scored_results[0];
+
+        // AMBIGUITY CHECK: If best is not exact match and there are multiple candidates
+        // with similar scores, the match is ambiguous
+        if !best_exact && scored_results.len() > 1 {
+            let (_, second_score, _) = scored_results[1];
+            
+            // If scores are within 1000 of each other (both have similar vote counts)
+            // and neither is an exact match, it's ambiguous
+            if best_score - second_score < 1000 {
+                tracing::warn!(
+                    "Ambiguous movie match: '{}' (score {}) vs '{}' (score {}) - skipping",
+                    results[best_idx].title, best_score,
+                    results[scored_results[1].0].title, second_score
+                );
+                return None;
+            }
+        }
+
+        // Require minimum vote count for non-exact matches to ensure quality
+        if !best_exact {
+            let vote_count = results[best_idx].vote_count.unwrap_or(0);
+            if vote_count < 10 {
+                tracing::warn!(
+                    "Movie match too uncertain (low votes): '{}' ({} votes) - skipping",
+                    results[best_idx].title, vote_count
+                );
+                return None;
             }
         }
 
         tracing::debug!(
-            "Selected best match: {} (score: {})",
+            "Selected best match: {} (score: {}, exact: {})",
             results[best_idx].title,
-            best_score
+            best_score,
+            best_exact
         );
 
-        &results[best_idx]
+        Some(&results[best_idx])
     }
     
     /// Normalize title for comparison (lowercase, remove punctuation/spaces).
@@ -1750,6 +1971,7 @@ impl Planner {
     }
 
     /// Generate target path information and operations.
+    /// Returns None if country information cannot be determined (skip rather than wrong match).
     fn generate_target_info(
         &self,
         video: &VideoFile,
@@ -1759,7 +1981,7 @@ impl Planner {
         video_metadata: &VideoMetadata,
         target: &Path,
         media_type: MediaType,
-    ) -> Result<(TargetInfo, Vec<Operation>)> {
+    ) -> Result<Option<(TargetInfo, Vec<Operation>)>> {
         let mut operations = Vec::new();
 
         // Get file extension
@@ -1825,7 +2047,7 @@ impl Planner {
 
         // Get country folder name (e.g., "CN_China", "US_UnitedStates")
         // Uses original_language to determine the best country for co-productions
-        let country_folder = match media_type {
+        let country_folder_opt = match media_type {
             MediaType::Movies => {
                 movie_metadata.as_ref().and_then(|m| {
                     self.format_country_folder(
@@ -1844,7 +2066,20 @@ impl Planner {
                     )
                 })
             }
-        }.unwrap_or_else(|| "Unknown".to_string());
+        };
+        
+        // Principle: prefer skipping over wrong classification
+        // If we can't determine the country, skip this file
+        let country_folder = match country_folder_opt {
+            Some(folder) => folder,
+            None => {
+                tracing::warn!(
+                    "Skipping {}: cannot determine country (prefer skip over wrong match)",
+                    video.filename
+                );
+                return Ok(None);
+            }
+        };
 
         // Build target paths with country folder layer
         let country_path = target.join(&country_folder);
@@ -1934,7 +2169,7 @@ impl Planner {
             poster: Some("poster.jpg".to_string()),
         };
 
-        Ok((target_info, operations))
+        Ok(Some((target_info, operations)))
     }
 
     /// Process sample files.

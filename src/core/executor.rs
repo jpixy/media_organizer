@@ -18,7 +18,7 @@ use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -66,7 +66,7 @@ impl Executor {
 
     /// Execute a plan with optimized parallel downloads.
     pub async fn execute(&self, plan: &Plan) -> Result<Rollback> {
-        println!("{}", "🚀 Executing plan...".bold().cyan());
+        println!("{}", "[EXEC] Executing plan...".bold().cyan());
         println!();
 
         // Validate plan first
@@ -115,7 +115,7 @@ impl Executor {
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
                 .unwrap()
-                .progress_chars("█▓░"),
+                .progress_chars("=>-"),
         );
 
         // Phase 1: Execute non-download operations sequentially
@@ -206,7 +206,7 @@ impl Executor {
         println!();
 
         // Print summary
-        println!("{}", "📊 Execution Summary".bold().green());
+        println!("{}", "[Execution Summary]".bold().green());
         println!("  {} {}", "Successful operations:".bold(), success_count);
         println!("  {} {}", "Failed operations:".bold(), error_count);
         println!();
@@ -274,7 +274,7 @@ impl Executor {
 
     /// Validate a plan before execution.
     pub fn validate(&self, plan: &Plan) -> Result<()> {
-        println!("🔍 Validating plan...");
+        println!("[INFO] Validating plan...");
 
         let mut errors = Vec::new();
 
@@ -303,7 +303,7 @@ impl Executor {
         }
 
         if !errors.is_empty() {
-            println!("{}", "❌ Validation failed:".bold().red());
+            println!("{}", "[FAILED] Validation failed:".bold().red());
             for error in &errors {
                 println!("  - {}", error);
             }
@@ -312,7 +312,7 @@ impl Executor {
             ));
         }
 
-        println!("{}", "✅ Validation passed".green());
+        println!("{}", "[OK] Validation passed".green());
         Ok(())
     }
 

@@ -15,7 +15,7 @@ pub async fn plan_movies(
     target: Option<&Path>,
     output: Option<&Path>,
 ) -> Result<()> {
-    println!("{}", "🎬 Planning movies organization...".bold().cyan());
+    println!("{}", "[PLAN] Planning movies organization...".bold().cyan());
     println!();
 
     plan_media(source, target, output, MediaType::Movies).await
@@ -27,7 +27,7 @@ pub async fn plan_tvshows(
     target: Option<&Path>,
     output: Option<&Path>,
 ) -> Result<()> {
-    println!("{}", "📺 Planning TV shows organization...".bold().cyan());
+    println!("{}", "[PLAN] Planning TV shows organization...".bold().cyan());
     println!();
 
     plan_media(source, target, output, MediaType::TvShows).await
@@ -77,7 +77,7 @@ async fn plan_media(
 
     // Print summary
     println!();
-    println!("{}", "📋 Plan Summary".bold().green());
+    println!("{}", "[Plan Summary]".bold().green());
     println!("  {} {}", "Videos to organize:".bold(), plan.items.len());
     println!("  {} {}", "Sample files:".bold(), plan.samples.len());
     println!("  {} {}", "Unknown/failed:".bold(), plan.unknown.len());
@@ -102,7 +102,7 @@ async fn plan_media(
     planner::save_plan(&plan, &output_path)?;
     println!(
         "{} {}",
-        "✅ Plan saved to:".bold().green(),
+        "[OK] Plan saved to:".bold().green(),
         output_path.display()
     );
 
@@ -111,7 +111,7 @@ async fn plan_media(
         Ok(session_dir) => {
             println!(
                 "{} {}",
-                "📁 Session saved to:".bold(),
+                "[INFO] Session saved to:".bold(),
                 session_dir.display()
             );
         }
@@ -122,7 +122,7 @@ async fn plan_media(
 
     // Print next steps
     println!();
-    println!("{}", "📝 Next Steps:".bold().yellow());
+    println!("{}", "[Next Steps]".bold().yellow());
     println!(
         "  1. Review the plan: {}",
         format!("cat {}", output_path.display()).cyan()
@@ -135,7 +135,7 @@ async fn plan_media(
     // Warn about unknown files
     if !plan.unknown.is_empty() {
         println!();
-        println!("{}", "⚠️  Unknown Files:".bold().yellow());
+        println!("{}", "[WARNING] Unknown Files:".bold().yellow());
         for item in &plan.unknown {
             println!(
                 "  {} - {}",

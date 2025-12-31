@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// Execute a plan file.
 pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()> {
-    println!("{}", "🚀 Executing plan...".bold().cyan());
+    println!("{}", "[EXEC] Executing plan...".bold().cyan());
     println!();
 
     // Validate plan file exists
@@ -21,7 +21,7 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
     }
 
     // Load plan
-    println!("📖 Loading plan: {}", plan_file.display());
+    println!("[INFO] Loading plan: {}", plan_file.display());
     let plan = planner::load_plan(plan_file)?;
 
     // Print plan info
@@ -33,7 +33,7 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
     println!();
 
     // Confirm execution
-    println!("{}", "⚠️  This will move and modify files!".bold().yellow());
+    println!("{}", "[WARNING] This will move and modify files!".bold().yellow());
     println!();
 
     // Execute plan
@@ -59,13 +59,13 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
     executor::save_rollback(&rollback, &rollback_path)?;
     println!(
         "{} {}",
-        "💾 Rollback saved to:".bold().green(),
+        "[OK] Rollback saved to:".bold().green(),
         rollback_path.display()
     );
 
     // Print next steps
     println!();
-    println!("{}", "📝 Next Steps:".bold().yellow());
+    println!("{}", "[Next Steps]".bold().yellow());
     println!(
         "  To undo changes: {}",
         format!("media-organizer rollback {}", rollback_path.display()).cyan()

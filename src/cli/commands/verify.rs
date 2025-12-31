@@ -19,7 +19,7 @@ struct VerifyResult {
 
 /// Verify video file integrity.
 pub async fn verify(path: &Path) -> Result<()> {
-    println!("{}", "🔍 Verifying video files...".bold().cyan());
+    println!("{}", "[VERIFY] Verifying video files...".bold().cyan());
     println!();
 
     // Check if path exists
@@ -32,7 +32,7 @@ pub async fn verify(path: &Path) -> Result<()> {
         vec![path.to_path_buf()]
     } else {
         // Directory - scan for videos
-        println!("📁 Scanning directory: {}", path.display());
+        println!("[INFO] Scanning directory: {}", path.display());
         let scan_result = scanner::scan_directory(path)?;
         let mut files: Vec<_> = scan_result.videos.iter().map(|v| v.path.clone()).collect();
         files.extend(scan_result.samples.iter().map(|v| v.path.clone()));
@@ -53,7 +53,7 @@ pub async fn verify(path: &Path) -> Result<()> {
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
             .unwrap()
-            .progress_chars("█▓░"),
+            .progress_chars("=>-"),
     );
 
     let mut results = Vec::new();
@@ -103,14 +103,14 @@ pub async fn verify(path: &Path) -> Result<()> {
     println!();
 
     // Print summary
-    println!("{}", "📊 Verification Summary".bold().green());
+    println!("{}", "[Verification Summary]".bold().green());
     println!("  {} {}", "Valid files:".bold(), success_count);
     println!("  {} {}", "Invalid files:".bold(), error_count);
     println!();
 
     // Print failed files
     if error_count > 0 {
-        println!("{}", "❌ Invalid Files:".bold().red());
+        println!("{}", "[FAILED] Invalid Files:".bold().red());
         for result in &results {
             if !result.success {
                 println!(
@@ -125,11 +125,11 @@ pub async fn verify(path: &Path) -> Result<()> {
 
     // Final status
     if error_count == 0 {
-        println!("{}", "✅ All files verified successfully!".green());
+        println!("{}", "[OK] All files verified successfully!".green());
     } else {
         println!(
             "{}",
-            format!("⚠️  {} file(s) failed verification", error_count).yellow()
+            format!("[WARNING] {} file(s) failed verification", error_count).yellow()
         );
     }
 

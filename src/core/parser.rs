@@ -122,7 +122,11 @@ impl FilenameParser {
     }
 
     /// Generate the prompt for parsing a filename.
+    /// 
+    /// The prompt is in Chinese to better handle Chinese filenames and leverage
+    /// the AI model's understanding of Chinese media naming conventions.
     fn generate_prompt(&self, filename: &str, media_type: MediaType) -> String {
+        // Type hint: "This is a movie file" / "This is a TV show file"
         let type_hint = match media_type {
             MediaType::Movies => "这是一个电影文件",
             MediaType::TvShows => "这是一个电视剧/剧集文件",
@@ -165,7 +169,7 @@ impl FilenameParser {
         let prompt = self.generate_prompt(filename, media_type);
 
         tracing::debug!("Parsing filename: {}", filename);
-        println!("    🤖 AI parsing: {} (CPU inference may take 1-3 min)...", filename);
+        println!("    [AI] Parsing: {} (CPU inference may take 1-3 min)...", filename);
 
         let start = std::time::Instant::now();
         
@@ -173,7 +177,7 @@ impl FilenameParser {
         let response = self.client.generate_with_format(&prompt, Some("json")).await?;
 
         let elapsed = start.elapsed();
-        println!("    ✓ Parsed in {:.1}s", elapsed.as_secs_f32());
+        println!("    [OK] Parsed in {:.1}s", elapsed.as_secs_f32());
         tracing::debug!("AI response: {}", response.response);
 
         // Parse the JSON response
@@ -566,4 +570,56 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
     } else {
         None
     }
+}
+
+/// Extract season number from directory name.
+/// Supports Chinese season patterns like:
+/// - "第一季", "第二季", "第1季", "第2季"
+/// - "Season 01", "Season 1", "S01", "S1"
+/// - "第一部", "第二部" (treated as seasons)
+pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
+    let name = dirname.trim();
+    
+    // Chinese numeral to number mapping
+    let chinese_nums = [
+        ("一", 1), ("二", 2), ("三", 3), ("四", 4), ("五", 5),
+        ("六", 6), ("七", 7), ("八", 8), ("九", 9), ("十", 10),
+        ("十一", 11), ("十二", 12), ("十三", 13), ("十四", 14), ("十五", 15),
+    ];
+    
+    // Pattern 1: "第X季" or "第X部" with Chinese numerals
+    for (cn, num) in &chinese_nums {
+        if name.contains(&format!("第{}季", cn)) || name.contains(&format!("第{}部", cn)) {
+            return Some(*num);
+        }
+    }
+    
+    // Pattern 2: "第N季" with Arabic numerals
+    if let Some(re) = regex::Regex::new(r"第(\d{1,2})季").ok() {
+        if let Some(caps) = re.captures(name) {
+            if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
+                return Some(num);
+            }
+        }
+    }
+    
+    // Pattern 3: "Season N", "Season 0N"
+    if let Some(re) = regex::Regex::new(r"(?i)season\s*(\d{1,2})").ok() {
+        if let Some(caps) = re.captures(name) {
+            if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
+                return Some(num);
+            }
+        }
+    }
+    
+    // Pattern 4: "S01", "S1" at end or with space
+    if let Some(re) = regex::Regex::new(r"(?i)(?:^|[\s\-_])s(\d{1,2})(?:$|[\s\-_])").ok() {
+        if let Some(caps) = re.captures(name) {
+            if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
+                return Some(num);
+            }
+        }
+    }
+    
+    None
 }

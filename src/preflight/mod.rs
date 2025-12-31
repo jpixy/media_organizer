@@ -58,19 +58,19 @@ pub fn print_results(results: &[CheckResult]) {
         if result.success {
             println!(
                 "{} {}: {}",
-                "✓".green(),
+                "[OK]".green(),
                 result.name.bold(),
                 result.message
             );
         } else {
             println!(
                 "{} {}: {}",
-                "✗".red(),
+                "[FAIL]".red(),
                 result.name.bold(),
                 result.message
             );
             if let Some(ref hint) = result.hint {
-                println!("  {} {}", "→".yellow(), hint);
+                println!("  {} {}", "->".yellow(), hint);
             }
         }
     }

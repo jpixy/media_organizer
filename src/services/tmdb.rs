@@ -159,6 +159,8 @@ pub struct TvDetails {
     pub vote_count: Option<u32>,
     pub genres: Option<Vec<TvGenre>>,
     pub production_countries: Option<Vec<TvCountry>>,
+    /// Origin countries (ISO 3166-1 codes like "US", "KR")
+    pub origin_country: Option<Vec<String>>,
     pub networks: Option<Vec<TvNetwork>>,
     pub created_by: Option<Vec<TvCreator>>,
     pub credits: Option<TvCredits>,

@@ -9,7 +9,7 @@ use std::fs;
 
 /// List all sessions.
 pub async fn list_sessions() -> Result<()> {
-    println!("{}", "📁 Sessions".bold().cyan());
+    println!("{}", "[Sessions]".bold().cyan());
     println!();
 
     let sessions_dir = planner::sessions_dir()?;
@@ -73,7 +73,7 @@ pub async fn list_sessions() -> Result<()> {
 
 /// Show details of a specific session.
 pub async fn show_session(session_id: &str) -> Result<()> {
-    println!("{} {}", "📋 Session:".bold().cyan(), session_id);
+    println!("{} {}", "[Session]".bold().cyan(), session_id);
     println!();
 
     let sessions_dir = planner::sessions_dir()?;
