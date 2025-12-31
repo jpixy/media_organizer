@@ -130,7 +130,7 @@ pub struct TvSearchResult {
 }
 
 /// TV show search item.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TvSearchItem {
     pub id: u64,
     pub name: String,

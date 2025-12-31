@@ -986,56 +986,155 @@ impl Planner {
             None => return Ok(None),
         };
 
-        // Prepare search queries: prefer Chinese title first, then original title
-        let mut queries: Vec<String> = Vec::new();
-        if let Some(title) = &parsed.title {
-            if !title.is_empty() {
-                queries.push(title.clone());
-                // Also try shorter versions for long titles
-                self.add_shortened_queries(&mut queries, title);
+        // Extract Chinese and English titles
+        let chinese_title = parsed.title.clone().filter(|t| !t.is_empty());
+        let english_title = parsed.original_title.clone().filter(|t| !t.is_empty());
+
+        tracing::debug!(
+            "TMDB movie search: chinese={:?}, english={:?}, year={:?}",
+            chinese_title, english_title, parsed.year
+        );
+
+        // Strategy: Search with both titles and find intersection first
+        // Priority: 1) Common results (both titles match) 
+        //           2) English title results
+        //           3) Chinese title results
+
+        let mut chinese_results: Vec<crate::services::tmdb::MovieSearchItem> = Vec::new();
+        let mut english_results: Vec<crate::services::tmdb::MovieSearchItem> = Vec::new();
+
+        // Search with Chinese title
+        if let Some(ref title) = chinese_title {
+            let results = if let Some(year) = parsed.year {
+                client.search_movie(title, Some(year)).await?
+            } else {
+                client.search_movie(title, None).await?
+            };
+            chinese_results = results;
+        }
+
+        // Search with English title
+        if let Some(ref title) = english_title {
+            let results = if let Some(year) = parsed.year {
+                client.search_movie(title, Some(year)).await?
+            } else {
+                client.search_movie(title, None).await?
+            };
+            english_results = results;
+        }
+
+        // Priority 1: Find common results (intersection by TMDB ID)
+        if !chinese_results.is_empty() && !english_results.is_empty() {
+            let chinese_ids: std::collections::HashSet<u64> = 
+                chinese_results.iter().map(|r| r.id).collect();
+            
+            let common: Vec<_> = english_results.iter()
+                .filter(|r| chinese_ids.contains(&r.id))
+                .collect();
+            
+            if !common.is_empty() {
+                let query = english_title.as_deref().unwrap_or("");
+                let best = self.select_best_movie_match_ref(&common, query);
+                tracing::info!(
+                    "TMDB found (common match): {} - matches both '{}' and '{}'",
+                    best.title,
+                    chinese_title.as_deref().unwrap_or(""),
+                    english_title.as_deref().unwrap_or("")
+                );
+                return self.get_movie_details(client, best.id).await;
             }
         }
-        if let Some(orig) = &parsed.original_title {
-            if !orig.is_empty() && !queries.contains(orig) {
-                queries.push(orig.clone());
+
+        // Priority 2: English title results (more reliable for international movies)
+        if !english_results.is_empty() {
+            let query = english_title.as_deref().unwrap_or("");
+            let best = self.select_best_movie_match(&english_results, query);
+            if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                tracing::info!("TMDB found (English match): {}", best.title);
+                return self.get_movie_details(client, best.id).await;
             }
         }
 
-        if queries.is_empty() {
-            return Ok(None);
+        // Priority 3: Chinese title results
+        if !chinese_results.is_empty() {
+            let query = chinese_title.as_deref().unwrap_or("");
+            let best = self.select_best_movie_match(&chinese_results, query);
+            if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                tracing::info!("TMDB found (Chinese match): {}", best.title);
+                return self.get_movie_details(client, best.id).await;
+            }
         }
 
-        // Try each query, with and without year
-        for query in &queries {
-            let query = query.as_str();
-            tracing::debug!("TMDB search: query='{}', year={:?}", query, parsed.year);
-
-            // First try with year (if available)
-            if let Some(year) = parsed.year {
-                let results = client.search_movie(query, Some(year)).await?;
+        // Fallback: Try shortened queries for long Chinese titles
+        if let Some(ref title) = chinese_title {
+            let mut shortened_queries: Vec<String> = Vec::new();
+            self.add_shortened_queries(&mut shortened_queries, title);
+            
+            for query in &shortened_queries {
+                let results = client.search_movie(query, parsed.year).await?;
                 if !results.is_empty() {
                     let best = self.select_best_movie_match(&results, query);
-                    // Verify the match is reasonable (not a completely different movie)
                     if self.is_reasonable_match(query, &best.title, &best.original_title) {
-                        tracing::info!("TMDB found: {} (with year {})", best.title, year);
+                        tracing::info!("TMDB found (shortened query): {}", best.title);
                         return self.get_movie_details(client, best.id).await;
                     }
                 }
             }
+        }
 
-            // Try without year
-            let results = client.search_movie(query, None).await?;
-            if !results.is_empty() {
-                let best = self.select_best_movie_match(&results, query);
-                if self.is_reasonable_match(query, &best.title, &best.original_title) {
-                    tracing::info!("TMDB found: {} (without year)", best.title);
-                    return self.get_movie_details(client, best.id).await;
-                }
+        tracing::warn!(
+            "TMDB: No match found for chinese={:?}, english={:?}",
+            chinese_title, english_title
+        );
+        Ok(None)
+    }
+
+    /// Select best movie match from a slice of references.
+    fn select_best_movie_match_ref<'a>(
+        &self,
+        results: &[&'a crate::services::tmdb::MovieSearchItem],
+        query_title: &str,
+    ) -> &'a crate::services::tmdb::MovieSearchItem {
+        use chrono::Datelike;
+        let current_year = chrono::Utc::now().year() as u16;
+        let query_normalized = self.normalize_title(query_title);
+
+        let mut best_idx = 0;
+        let mut best_score: i64 = -1;
+
+        for (i, movie) in results.iter().enumerate() {
+            let year: u16 = movie
+                .release_date
+                .as_ref()
+                .and_then(|d| d.split('-').next())
+                .and_then(|y| y.parse().ok())
+                .unwrap_or(0);
+
+            // Skip future movies
+            if year > current_year + 1 {
+                continue;
+            }
+
+            let mut score = movie.vote_count.unwrap_or(0) as i64;
+            if year > 0 { score += 100; }
+
+            // Bonus for title match
+            let title_normalized = self.normalize_title(&movie.title);
+            let original_normalized = self.normalize_title(&movie.original_title);
+
+            if title_normalized == query_normalized || original_normalized == query_normalized {
+                score += 10000;
+            } else if title_normalized.contains(&query_normalized) || original_normalized.contains(&query_normalized) {
+                score += 1000;
+            }
+
+            if score > best_score {
+                best_score = score;
+                best_idx = i;
             }
         }
 
-        tracing::warn!("TMDB: No reasonable match found for queries {:?}", queries);
-        Ok(None)
+        results[best_idx]
     }
 
     /// Check if the TMDB match is reasonable (title similarity).
@@ -1085,9 +1184,6 @@ impl Planner {
             None => return Ok((None, None)),
         };
 
-        // Prepare search queries: prefer Chinese title first, then folder name
-        let mut queries: Vec<String> = Vec::new();
-        
         // Helper to clean up search query
         let clean_query = |s: &str| -> String {
             s.replace('.', " ")
@@ -1095,87 +1191,129 @@ impl Planner {
                 .trim()
                 .to_string()
         };
+
+        // Extract Chinese and English titles
+        let chinese_title = parsed.title.as_ref().map(|t| clean_query(t)).filter(|t| !t.is_empty());
+        let english_title = parsed.original_title.as_ref().map(|t| clean_query(t)).filter(|t| !t.is_empty());
         
-        if let Some(title) = &parsed.title {
-            if !title.is_empty() {
-                queries.push(clean_query(title));
-            }
-        }
-        if let Some(orig) = &parsed.original_title {
-            if !orig.is_empty() {
-                let cleaned = clean_query(orig);
-                if !queries.contains(&cleaned) {
-                    queries.push(cleaned);
-                }
-            }
-        }
-        
-        // Add folder name as additional query if available
-        // Clean up folder name: remove prefixes like "Z_" and suffixes like ".4集"
-        // Skip if it looks like a quality descriptor (e.g., "1080P 内封字幕")
-        if let Some(folder) = folder_name {
-            // Skip quality descriptors
+        // Also consider folder name as fallback
+        let folder_query = folder_name.and_then(|folder| {
             let is_quality_desc = folder.contains("1080") || folder.contains("720") 
                 || folder.contains("2160") || folder.contains("4K")
                 || folder.contains("内封") || folder.contains("外挂");
             
-            if !is_quality_desc {
+            if is_quality_desc {
+                None
+            } else {
                 let cleaned = folder
                     .trim_start_matches("Z_")
                     .trim_start_matches("z_")
                     .split('.').next().unwrap_or(folder)
                     .replace('.', " ")
                     .replace('_', " ");
-                if !cleaned.is_empty() && !queries.iter().any(|q| q.contains(&cleaned) || cleaned.contains(q.as_str())) {
-                    tracing::debug!("Adding folder name as query: {}", cleaned);
-                    queries.push(cleaned);
-                }
+                if cleaned.is_empty() { None } else { Some(cleaned) }
+            }
+        });
+
+        tracing::debug!(
+            "TMDB TV search: chinese={:?}, english={:?}, folder={:?}, year={:?}",
+            chinese_title, english_title, folder_query, parsed.year
+        );
+
+        // Strategy: Search with both titles and find intersection first
+        // Priority: 1) Common results (both titles match)
+        //           2) English title results
+        //           3) Chinese title results
+        //           4) Folder name results
+
+        let mut chinese_results: Vec<crate::services::tmdb::TvSearchItem> = Vec::new();
+        let mut english_results: Vec<crate::services::tmdb::TvSearchItem> = Vec::new();
+
+        // Search with Chinese title
+        if let Some(ref title) = chinese_title {
+            let results = client.search_tv(title, parsed.year).await?;
+            if results.is_empty() {
+                chinese_results = client.search_tv(title, None).await?;
+            } else {
+                chinese_results = results;
             }
         }
 
-        if queries.is_empty() {
-            return Ok((None, None));
-        }
-        
-        let queries_ref: Vec<&str> = queries.iter().map(|s| s.as_str()).collect();
-
-        // Try each query
-        for query in &queries_ref {
-            tracing::debug!("TMDB TV search: query='{}', year={:?}", query, parsed.year);
-
-            // Search for TV show
-            let results = client.search_tv(query, parsed.year).await?;
-            
+        // Search with English title
+        if let Some(ref title) = english_title {
+            let results = client.search_tv(title, parsed.year).await?;
             if results.is_empty() {
-                // Try without year
-                let results = client.search_tv(query, None).await?;
-                if results.is_empty() {
-                    continue;
-                }
-                
-                // Select best match from results
-                if let Some(best) = self.select_best_tv_match(query, &results) {
+                english_results = client.search_tv(title, None).await?;
+            } else {
+                english_results = results;
+            }
+        }
+
+        // Priority 1: Find common results (intersection by TMDB ID)
+        if !chinese_results.is_empty() && !english_results.is_empty() {
+            let chinese_ids: std::collections::HashSet<u64> = 
+                chinese_results.iter().map(|r| r.id).collect();
+            
+            let common: Vec<_> = english_results.iter()
+                .filter(|r| chinese_ids.contains(&r.id))
+                .cloned()
+                .collect();
+            
+            if !common.is_empty() {
+                let query = english_title.as_deref().unwrap_or("");
+                if let Some(best) = self.select_best_tv_match(query, &common) {
+                    tracing::info!(
+                        "TMDB TV found (common match): {} - matches both '{}' and '{}'",
+                        best.name,
+                        chinese_title.as_deref().unwrap_or(""),
+                        english_title.as_deref().unwrap_or("")
+                    );
                     return self.get_tvshow_details(client, best.id, parsed).await;
                 }
-                continue;
             }
+        }
 
-            // Select best match from results
-            if let Some(best) = self.select_best_tv_match(query, &results) {
-                tracing::info!("TMDB TV found: {} ({})", best.name, best.first_air_date.as_deref().unwrap_or("?"));
+        // Priority 2: English title results
+        if !english_results.is_empty() {
+            let query = english_title.as_deref().unwrap_or("");
+            if let Some(best) = self.select_best_tv_match(query, &english_results) {
+                tracing::info!("TMDB TV found (English match): {}", best.name);
                 return self.get_tvshow_details(client, best.id, parsed).await;
             }
+        }
 
-            // Try without year if no good match
-            let results_no_year = client.search_tv(query, None).await?;
-            if !results_no_year.is_empty() {
-                if let Some(best) = self.select_best_tv_match(query, &results_no_year) {
+        // Priority 3: Chinese title results
+        if !chinese_results.is_empty() {
+            let query = chinese_title.as_deref().unwrap_or("");
+            if let Some(best) = self.select_best_tv_match(query, &chinese_results) {
+                tracing::info!("TMDB TV found (Chinese match): {}", best.name);
+                return self.get_tvshow_details(client, best.id, parsed).await;
+            }
+        }
+
+        // Priority 4: Folder name as fallback
+        if let Some(ref folder) = folder_query {
+            let results = client.search_tv(folder, parsed.year).await?;
+            if !results.is_empty() {
+                if let Some(best) = self.select_best_tv_match(folder, &results) {
+                    tracing::info!("TMDB TV found (folder match): {}", best.name);
+                    return self.get_tvshow_details(client, best.id, parsed).await;
+                }
+            }
+            // Try without year
+            let results = client.search_tv(folder, None).await?;
+            if !results.is_empty() {
+                if let Some(best) = self.select_best_tv_match(folder, &results) {
+                    tracing::info!("TMDB TV found (folder match, no year): {}", best.name);
                     return self.get_tvshow_details(client, best.id, parsed).await;
                 }
             }
         }
 
-        tracing::warn!("TMDB TV: No reasonable match found for queries {:?}", queries);
+        tracing::warn!(
+            "TMDB TV: No match found for chinese={:?}, english={:?}, folder={:?}",
+            chinese_title, english_title, folder_query
+        );
         Ok((None, None))
     }
 
