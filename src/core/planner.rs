@@ -267,9 +267,13 @@ impl Planner {
                                 items.push(item);
                             }
                             Ok(None) => {
+                                let reason = match media_type {
+                                    MediaType::Movies => "Failed to find TMDB match",
+                                    MediaType::TvShows => "Failed to extract episode info",
+                                };
                                 unknown.push(UnknownItem {
                                     source: video.clone(),
-                                    reason: "Failed to extract episode info".to_string(),
+                                    reason: reason.to_string(),
                                 });
                             }
                             Err(e) => {

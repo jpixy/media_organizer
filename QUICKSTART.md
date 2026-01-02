@@ -95,6 +95,9 @@ ls -la ~/Videos/Movies/
 | Execute plan | `media-organizer execute <plan.json>` |
 | Rollback | `media-organizer rollback <rollback.json>` |
 | View sessions | `media-organizer sessions list` |
+| Index stats | `media-organizer index stats` |
+| Find duplicates | `media-organizer index duplicates` |
+| Search | `media-organizer search -t <title>` |
 | Verify files | `media-organizer verify <path>` |
 | Help | `media-organizer --help` |
 
@@ -123,6 +126,9 @@ media-organizer search --country CN --show-status
 
 # Search by year range
 media-organizer search -y 2020-2024
+
+# Find duplicates across disks
+media-organizer index duplicates
 ```
 
 ## Export & Import

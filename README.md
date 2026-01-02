@@ -135,6 +135,18 @@ media-organizer index verify /path/to/movies
 
 # Remove a disk from index
 media-organizer index remove OldDisk --confirm
+
+# Find duplicate media by TMDB ID across disks
+media-organizer index duplicates
+
+# Find only duplicate movies
+media-organizer index duplicates --media-type movies
+
+# Find only duplicate TV shows
+media-organizer index duplicates --media-type tvshows
+
+# Output as JSON
+media-organizer index duplicates --format json
 ```
 
 ### search - Search Media Collection

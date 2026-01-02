@@ -26,6 +26,9 @@ pub async fn execute_index(action: IndexAction) -> Result<()> {
             disk_label,
             confirm,
         } => remove_disk(&disk_label, confirm).await,
+        IndexAction::Duplicates { media_type, format } => {
+            find_duplicates(&media_type, &format).await
+        }
     }
 }
 
@@ -342,6 +345,243 @@ async fn remove_disk(disk_label: &str, confirm: bool) -> Result<()> {
         .bold()
         .green()
     );
+
+    Ok(())
+}
+
+/// Data structure for duplicate entry info.
+#[derive(Debug, Clone, serde::Serialize)]
+struct DuplicateEntry {
+    disk: String,
+    path: String,
+    size_bytes: u64,
+    size_human: String,
+    online: bool,
+}
+
+/// Data structure for duplicate group.
+#[derive(Debug, Clone, serde::Serialize)]
+struct DuplicateGroup {
+    tmdb_id: u64,
+    title: String,
+    year: Option<u16>,
+    media_type: String,
+    entries: Vec<DuplicateEntry>,
+    total_size_bytes: u64,
+    total_size_human: String,
+}
+
+/// Format bytes to human-readable string.
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Find duplicates by TMDB ID across disks.
+async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
+    let index = indexer::load_central_index()?;
+
+    let show_movies = media_type == "all" || media_type == "movies";
+    let show_tvshows = media_type == "all" || media_type == "tvshows";
+
+    let mut duplicates: Vec<DuplicateGroup> = Vec::new();
+
+    // Find duplicate movies
+    if show_movies {
+        let mut tmdb_to_movies: std::collections::HashMap<u64, Vec<_>> =
+            std::collections::HashMap::new();
+
+        for movie in &index.movies {
+            if let Some(tmdb_id) = movie.tmdb_id {
+                tmdb_to_movies.entry(tmdb_id).or_default().push(movie);
+            }
+        }
+
+        for (tmdb_id, movies) in tmdb_to_movies {
+            if movies.len() > 1 {
+                let total_size: u64 = movies.iter().map(|m| m.size_bytes).sum();
+                duplicates.push(DuplicateGroup {
+                    tmdb_id,
+                    title: movies[0].title.clone(),
+                    year: movies[0].year,
+                    media_type: "movie".to_string(),
+                    entries: movies
+                        .iter()
+                        .map(|m| DuplicateEntry {
+                            disk: m.disk.clone(),
+                            path: m.relative_path.clone(),
+                            size_bytes: m.size_bytes,
+                            size_human: format_size(m.size_bytes),
+                            online: indexer::is_disk_online(&m.disk),
+                        })
+                        .collect(),
+                    total_size_bytes: total_size,
+                    total_size_human: format_size(total_size),
+                });
+            }
+        }
+    }
+
+    // Find duplicate TV shows
+    if show_tvshows {
+        let mut tmdb_to_tvshows: std::collections::HashMap<u64, Vec<_>> =
+            std::collections::HashMap::new();
+
+        for tvshow in &index.tvshows {
+            if let Some(tmdb_id) = tvshow.tmdb_id {
+                tmdb_to_tvshows.entry(tmdb_id).or_default().push(tvshow);
+            }
+        }
+
+        for (tmdb_id, tvshows) in tmdb_to_tvshows {
+            if tvshows.len() > 1 {
+                let total_size: u64 = tvshows.iter().map(|t| t.size_bytes).sum();
+                duplicates.push(DuplicateGroup {
+                    tmdb_id,
+                    title: tvshows[0].title.clone(),
+                    year: tvshows[0].year,
+                    media_type: "tvshow".to_string(),
+                    entries: tvshows
+                        .iter()
+                        .map(|t| DuplicateEntry {
+                            disk: t.disk.clone(),
+                            path: t.relative_path.clone(),
+                            size_bytes: t.size_bytes,
+                            size_human: format_size(t.size_bytes),
+                            online: indexer::is_disk_online(&t.disk),
+                        })
+                        .collect(),
+                    total_size_bytes: total_size,
+                    total_size_human: format_size(total_size),
+                });
+            }
+        }
+    }
+
+    // Sort by total size (largest first)
+    duplicates.sort_by(|a, b| b.total_size_bytes.cmp(&a.total_size_bytes));
+
+    // Output
+    match format {
+        "json" => {
+            let json = serde_json::to_string_pretty(&duplicates)?;
+            println!("{}", json);
+        }
+        "simple" => {
+            if duplicates.is_empty() {
+                println!("No duplicates found.");
+            } else {
+                println!("Found {} duplicate groups:\n", duplicates.len());
+                for group in &duplicates {
+                    let year_str = group.year.map(|y| y.to_string()).unwrap_or_default();
+                    println!(
+                        "[{}] {} ({}) - tmdb{} - {} copies - {}",
+                        group.media_type.to_uppercase(),
+                        group.title,
+                        year_str,
+                        group.tmdb_id,
+                        group.entries.len(),
+                        group.total_size_human
+                    );
+                    for entry in &group.entries {
+                        let status = if entry.online { "online" } else { "offline" };
+                        println!(
+                            "  - {} ({}) [{}]: {}",
+                            entry.disk, status, entry.size_human, entry.path
+                        );
+                    }
+                    println!();
+                }
+            }
+        }
+        _ => {
+            // Table format (default)
+            if duplicates.is_empty() {
+                println!("{}", "No duplicates found.".green());
+            } else {
+                println!(
+                    "{}",
+                    format!("Found {} duplicate groups:", duplicates.len())
+                        .bold()
+                        .yellow()
+                );
+                println!();
+
+                for group in &duplicates {
+                    let year_str = group
+                        .year
+                        .map(|y| format!("({})", y))
+                        .unwrap_or_default();
+                    let type_badge = match group.media_type.as_str() {
+                        "movie" => "[MOVIE]".cyan(),
+                        "tvshow" => "[TVSHOW]".magenta(),
+                        _ => "[?]".white(),
+                    };
+
+                    println!(
+                        "{} {} {} - tmdb{} - {} copies",
+                        type_badge,
+                        group.title.bold(),
+                        year_str,
+                        group.tmdb_id,
+                        group.entries.len()
+                    );
+                    println!(
+                        "  Total size: {}",
+                        group.total_size_human.bold().red()
+                    );
+                    println!("  {}", "-".repeat(60));
+
+                    for entry in &group.entries {
+                        let status = if entry.online {
+                            "Online".green()
+                        } else {
+                            "Offline".red()
+                        };
+                        println!(
+                            "  {:>12} | {:>10} | {} | {}",
+                            entry.disk.bold(),
+                            entry.size_human,
+                            status,
+                            entry.path
+                        );
+                    }
+                    println!();
+                }
+
+                // Summary
+                let total_wasted: u64 = duplicates
+                    .iter()
+                    .map(|g| {
+                        // Wasted = total - smallest copy
+                        let min_size = g.entries.iter().map(|e| e.size_bytes).min().unwrap_or(0);
+                        g.total_size_bytes - min_size
+                    })
+                    .sum();
+
+                println!("{}", "=".repeat(60));
+                println!(
+                    "Total duplicate groups: {}",
+                    duplicates.len().to_string().bold()
+                );
+                println!(
+                    "Potential space savings: {}",
+                    format_size(total_wasted).bold().green()
+                );
+            }
+        }
+    }
 
     Ok(())
 }

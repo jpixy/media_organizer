@@ -219,6 +219,17 @@ pub enum IndexAction {
         #[arg(long)]
         confirm: bool,
     },
+
+    /// Find duplicate movies/TV shows by TMDB ID across disks
+    Duplicates {
+        /// Media type filter: movies, tvshows, or all
+        #[arg(long, default_value = "all")]
+        media_type: String,
+
+        /// Output format: table, simple, json
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
