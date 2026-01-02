@@ -5,6 +5,7 @@ A smart media file organizer that uses AI to parse filenames and fetch metadata 
 ## Features
 
 - **AI-powered filename parsing** - Uses local Ollama + Qwen 2.5 model for intelligent movie/show recognition
+- **IMDB ID direct lookup** - Highest priority: directly fetches metadata using IMDB ID from filename (skips AI)
 - **TMDB metadata** - Auto-fetches movie details, posters, directors, actors, and collection info
 - **Smart renaming** - Renames files and folders in standardized format
 - **Safe operations** - Generate plan first, preview, then execute with full rollback support
@@ -325,6 +326,16 @@ ollama serve 2>&1 | grep -i "inference compute"
 |------|--------------------------|
 | CPU | 30-60 seconds |
 | GPU (RTX 3500) | 1-2 seconds |
+
+## Metadata Lookup Priority
+
+The tool uses a smart priority system for metadata lookup:
+
+1. **TMDB ID** (highest priority) - If filename contains `tmdb12345`, fetches directly from TMDB
+2. **IMDB ID** - If filename contains `tt1234567`, uses TMDB's find API to lookup
+3. **AI parsing + title search** - Uses Ollama AI to parse filename, then searches TMDB by title
+
+This means files with IMDB IDs in their names (e.g., `Movie (2023) tt1234567.mkv`) can be matched even when title search fails.
 
 ## Troubleshooting
 

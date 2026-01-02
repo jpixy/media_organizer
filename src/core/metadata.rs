@@ -545,6 +545,15 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
         }
     }
     
+    // Extract IMDB ID from filename (format: tt1234567 or tt12345678)
+    if let Some(re) = regex::Regex::new(r"(tt\d{7,8})").ok() {
+        if let Some(caps) = re.captures(&name) {
+            if let Some(imdb_match) = caps.get(1) {
+                metadata.imdb_id = Some(imdb_match.as_str().to_string());
+            }
+        }
+    }
+    
     // If we found episode but no title, we need AI
     if metadata.episode.is_some() && !metadata.has_searchable_info() {
         metadata.needs_ai_parsing = true;
@@ -556,6 +565,10 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     }
     if metadata.year.is_some() {
         metadata.confidence += 0.1;
+    }
+    // High confidence if we have IMDB ID
+    if metadata.imdb_id.is_some() {
+        metadata.confidence = 0.95;
     }
     
     metadata

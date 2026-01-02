@@ -390,7 +390,77 @@ impl Planner {
             }
         }
         
-        // Step 1: Parse filename
+        // Step 1: Extract IDs from filename FIRST (highest priority - skip AI if we have ID)
+        let filename_meta = metadata::extract_from_filename(&video.filename);
+        
+        // Priority 1: Direct TMDB/IMDB ID lookup (skip AI entirely)
+        if media_type == MediaType::Movies {
+            if let Some(movie_metadata) = self.try_direct_id_lookup(&filename_meta).await? {
+                tracing::info!(
+                    "[DIRECT-ID] Found movie via ID: {} ({})",
+                    movie_metadata.title,
+                    video.filename
+                );
+                
+                // Build parsed info from filename metadata
+                let parsed = ParsedFilename {
+                    title: filename_meta.chinese_title.clone(),
+                    original_title: filename_meta.english_title.clone(),
+                    year: filename_meta.year,
+                    season: None,
+                    episode: None,
+                    confidence: 1.0,
+                    raw_response: Some("direct_id_lookup".to_string()),
+                };
+                
+                // Get video metadata (use precomputed or fallback)
+                let video_metadata = match precomputed_ffprobe {
+                    Some(meta) => meta.clone(),
+                    None => {
+                        let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                        let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                        ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
+                    }
+                };
+                
+                // Generate target info and operations
+                let (target_info, operations) = match self.generate_target_info(
+                    video,
+                    &Some(movie_metadata.clone()),
+                    &None,
+                    &parsed,
+                    &video_metadata,
+                    target,
+                    media_type,
+                )? {
+                    Some(result) => result,
+                    None => return Ok(None),
+                };
+                
+                let plan_item = PlanItem {
+                    id: Uuid::new_v4().to_string(),
+                    source: video.clone(),
+                    parsed: ParsedInfo {
+                        title: parsed.title.clone(),
+                        original_title: parsed.original_title.clone(),
+                        year: parsed.year,
+                        confidence: parsed.confidence,
+                        raw_response: parsed.raw_response.clone(),
+                    },
+                    movie_metadata: Some(movie_metadata),
+                    tvshow_metadata: None,
+                    episode_metadata: None,
+                    video_metadata: video_metadata.clone(),
+                    target: target_info,
+                    operations,
+                    status: PlanItemStatus::Pending,
+                };
+                
+                return Ok(Some((plan_item, None)));
+            }
+        }
+        
+        // Step 2: Parse filename (AI or regex) - fallback when no ID found
         let parsed = if media_type == MediaType::TvShows && cached_show.is_some() {
             // FAST PATH: Extract episode from filename using regex
             let (mut season, episode) = parser::extract_episode_from_filename(&video.filename);
@@ -424,7 +494,7 @@ impl Planner {
                 raw_response: Some("regex_extracted".to_string()),
             }
         } else {
-            // AI parsing for first video or movies
+            // AI parsing for first video or movies (fallback when no ID found)
             let parse_input = self.build_parse_input(video);
             let parsed = self.parser.parse(&parse_input, media_type).await?;
             if !self.parser.is_valid(&parsed) {
@@ -434,9 +504,10 @@ impl Planner {
             parsed
         };
 
-        // Step 2: Get metadata
+        // Step 3: Get metadata via title search
         let (movie_metadata, tvshow_metadata, episode_metadata) = match media_type {
             MediaType::Movies => {
+                // No direct ID available, use title search
                 let movie = self.query_tmdb_movie(&parsed).await?;
                 if movie.is_none() {
                     return Ok(None);
@@ -787,17 +858,35 @@ impl Planner {
             })
             .unwrap_or_default();
 
-        let country_codes: Vec<String> = details
+        // Extract country codes - use production_countries first, then origin_country as fallback
+        let mut country_codes: Vec<String> = details
             .production_countries
             .as_ref()
             .map(|countries| countries.iter().map(|c| c.iso_3166_1.clone()).collect())
             .unwrap_or_default();
         
-        let countries: Vec<String> = details
-            .production_countries
-            .as_ref()
-            .map(|countries| countries.iter().map(|c| c.name.clone()).collect())
-            .unwrap_or_default();
+        // Use origin_country as fallback if production_countries is empty
+        if country_codes.is_empty() {
+            if let Some(ref origin) = details.origin_country {
+                country_codes = origin.clone();
+            }
+        }
+        
+        // Extract country names - use production_countries first, then map from origin_country codes
+        let countries: Vec<String> = if let Some(ref pc) = details.production_countries {
+            if !pc.is_empty() {
+                pc.iter().map(|c| c.name.clone()).collect()
+            } else if let Some(ref oc) = details.origin_country {
+                // Map country codes to names
+                oc.iter().map(|c| country_code_to_name(c)).collect()
+            } else {
+                Vec::new()
+            }
+        } else if let Some(ref oc) = details.origin_country {
+            oc.iter().map(|c| country_code_to_name(c)).collect()
+        } else {
+            Vec::new()
+        };
         
         let genres: Vec<String> = details
             .genres
@@ -1304,9 +1393,15 @@ impl Planner {
         };
 
         // Step 2: Query TMDB based on media type
+        // For movies, try to extract IMDB ID from filename for priority lookup
+        let filename_imdb_id = metadata::extract_from_filename(&video.filename).imdb_id;
+        
         let (movie_metadata, tvshow_metadata) = match media_type {
             MediaType::Movies => {
-                let movie = self.query_tmdb_movie(&parsed).await?;
+                let movie = self.query_tmdb_movie_with_imdb(
+                    &parsed,
+                    filename_imdb_id.as_deref(),
+                ).await?;
                 if movie.is_none() {
                     tracing::debug!("No TMDB match for movie: {}", video.filename);
                     return Ok(None);
@@ -1853,12 +1948,104 @@ impl Planner {
         false
     }
 
-    /// Query TMDB for movie metadata.
-    async fn query_tmdb_movie(&self, parsed: &ParsedFilename) -> Result<Option<MovieMetadata>> {
+    /// Try to get movie metadata directly using TMDB ID or IMDB ID from filename.
+    /// 
+    /// This is the highest priority lookup - if we have an ID, skip AI parsing entirely.
+    /// Returns None if no ID found or lookup fails.
+    async fn try_direct_id_lookup(
+        &self,
+        filename_meta: &metadata::CandidateMetadata,
+    ) -> Result<Option<MovieMetadata>> {
         let client = match &self.tmdb_client {
             Some(c) => c,
             None => return Ok(None),
         };
+
+        // Priority 1: TMDB ID (highest priority - direct lookup)
+        if let Some(tmdb_id) = filename_meta.tmdb_id {
+            tracing::debug!("[DIRECT-ID] Trying TMDB ID: {}", tmdb_id);
+            match self.get_movie_details(client, tmdb_id).await {
+                Ok(Some(movie)) => {
+                    tracing::info!("[DIRECT-ID] Found movie via TMDB ID {}: {}", tmdb_id, movie.title);
+                    return Ok(Some(movie));
+                }
+                Ok(None) => {
+                    tracing::warn!("[DIRECT-ID] TMDB ID {} returned no results", tmdb_id);
+                }
+                Err(e) => {
+                    tracing::warn!("[DIRECT-ID] TMDB ID {} lookup failed: {}", tmdb_id, e);
+                }
+            }
+        }
+
+        // Priority 2: IMDB ID (use find API to get TMDB ID)
+        if let Some(ref imdb_id) = filename_meta.imdb_id {
+            tracing::debug!("[DIRECT-ID] Trying IMDB ID: {}", imdb_id);
+            match client.find_movie_by_imdb_id(imdb_id).await {
+                Ok(Some(tmdb_id)) => {
+                    tracing::info!("[DIRECT-ID] IMDB {} -> TMDB {}", imdb_id, tmdb_id);
+                    match self.get_movie_details(client, tmdb_id).await {
+                        Ok(Some(movie)) => {
+                            tracing::info!("[DIRECT-ID] Found movie via IMDB ID {}: {}", imdb_id, movie.title);
+                            return Ok(Some(movie));
+                        }
+                        Ok(None) => {
+                            tracing::warn!("[DIRECT-ID] TMDB ID {} (from IMDB {}) returned no results", tmdb_id, imdb_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("[DIRECT-ID] TMDB lookup for IMDB {} failed: {}", imdb_id, e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!("[DIRECT-ID] No TMDB match for IMDB ID: {}", imdb_id);
+                }
+                Err(e) => {
+                    tracing::warn!("[DIRECT-ID] IMDB ID {} lookup failed: {}", imdb_id, e);
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Query TMDB for movie metadata (convenience wrapper without IMDB ID).
+    #[allow(dead_code)]
+    async fn query_tmdb_movie(&self, parsed: &ParsedFilename) -> Result<Option<MovieMetadata>> {
+        self.query_tmdb_movie_with_imdb(parsed, None).await
+    }
+
+    /// Query TMDB for movie metadata with optional IMDB ID.
+    /// 
+    /// Priority:
+    /// 1. If IMDB ID is provided, use find API to get TMDB ID directly (highest priority)
+    /// 2. Otherwise, search by title with various strategies
+    async fn query_tmdb_movie_with_imdb(
+        &self, 
+        parsed: &ParsedFilename,
+        imdb_id: Option<&str>,
+    ) -> Result<Option<MovieMetadata>> {
+        let client = match &self.tmdb_client {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        // Priority 0: If IMDB ID is provided, try to find movie directly
+        if let Some(imdb) = imdb_id {
+            tracing::debug!("Trying IMDB ID lookup: {}", imdb);
+            match client.find_movie_by_imdb_id(imdb).await {
+                Ok(Some(tmdb_id)) => {
+                    tracing::info!("TMDB found via IMDB ID {}: tmdb{}", imdb, tmdb_id);
+                    return self.get_movie_details(client, tmdb_id).await;
+                }
+                Ok(None) => {
+                    tracing::debug!("No TMDB match for IMDB ID: {}", imdb);
+                }
+                Err(e) => {
+                    tracing::warn!("IMDB lookup failed for {}: {}", imdb, e);
+                }
+            }
+        }
 
         // Extract Chinese and English titles, filtering out meaningless ones
         let chinese_title = parsed.title.clone()
@@ -2804,19 +2991,35 @@ impl Planner {
             .map(|g| g.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
-        // Extract production countries
-        let countries = details
-            .production_countries
-            .as_ref()
-            .map(|c| c.iter().map(|x| x.name.clone()).collect())
-            .unwrap_or_default();
-
-        // Extract country codes (ISO 3166-1)
-        let country_codes = details
+        // Extract country codes - use production_countries first, then origin_country as fallback
+        let mut country_codes: Vec<String> = details
             .production_countries
             .as_ref()
             .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
             .unwrap_or_default();
+        
+        // Use origin_country as fallback if production_countries is empty
+        if country_codes.is_empty() {
+            if let Some(ref origin) = details.origin_country {
+                country_codes = origin.clone();
+            }
+        }
+
+        // Extract country names - use production_countries first, then map from origin_country codes
+        let countries: Vec<String> = if let Some(ref pc) = details.production_countries {
+            if !pc.is_empty() {
+                pc.iter().map(|x| x.name.clone()).collect()
+            } else if let Some(ref oc) = details.origin_country {
+                // Map country codes to names
+                oc.iter().map(|c| country_code_to_name(c)).collect()
+            } else {
+                Vec::new()
+            }
+        } else if let Some(ref oc) = details.origin_country {
+            oc.iter().map(|c| country_code_to_name(c)).collect()
+        } else {
+            Vec::new()
+        };
 
         // Extract studios
         let studios = details

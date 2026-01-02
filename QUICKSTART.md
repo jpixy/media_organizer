@@ -208,7 +208,7 @@ A: Check if GPU is enabled. Run `nvidia-smi` to confirm GPU is available, see [G
 A: In mainland China, you need a proxy to access TMDB. Ensure your proxy is enabled.
 
 ### Q: Movie info not found?
-A: The filename may be too complex or the movie doesn't exist in TMDB. Check the `unknown` section in `plan.json`.
+A: Try adding the IMDB ID to the filename (e.g., `Movie (2023) tt1234567.mkv`). Files with IMDB IDs have the highest lookup priority and skip AI parsing entirely. If IMDB ID is not available, check the `unknown` section in `plan.json`.
 
 ### Q: How to rollback?
 A: Run `media-organizer rollback <rollback.json>` using the rollback file generated during execution.

@@ -77,6 +77,9 @@ pub struct MovieDetails {
     pub genres: Option<Vec<Genre>>,
     pub production_countries: Option<Vec<ProductionCountry>>,
     pub production_companies: Option<Vec<ProductionCompany>>,
+    /// Origin countries (ISO 3166-1 codes like "US", "CN", "KR")
+    /// Fallback when production_countries is empty
+    pub origin_country: Option<Vec<String>>,
     pub credits: Option<Credits>,
     pub release_dates: Option<ReleaseDates>,
     /// Collection/Set this movie belongs to.
@@ -229,6 +232,31 @@ pub struct ExternalIds {
     pub tvdb_id: Option<u64>,
 }
 
+/// Result from TMDB's find by external ID API.
+#[derive(Debug, Deserialize)]
+pub struct FindByExternalIdResult {
+    pub movie_results: Vec<FindMovieResult>,
+    pub tv_results: Vec<FindTvResult>,
+}
+
+/// Movie result from find API.
+#[derive(Debug, Deserialize)]
+pub struct FindMovieResult {
+    pub id: u64,
+    pub title: String,
+    pub original_title: String,
+    pub release_date: Option<String>,
+}
+
+/// TV show result from find API.
+#[derive(Debug, Deserialize)]
+pub struct FindTvResult {
+    pub id: u64,
+    pub name: String,
+    pub original_name: String,
+    pub first_air_date: Option<String>,
+}
+
 /// Season details.
 #[derive(Debug, Deserialize)]
 pub struct SeasonDetails {
@@ -371,6 +399,49 @@ impl TmdbClient {
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
+    }
+
+    /// Find movie by IMDB ID using TMDB's find API.
+    /// 
+    /// This is useful when the filename contains an IMDB ID (e.g., tt2962872)
+    /// but the title search fails to find a match.
+    /// 
+    /// Returns the TMDB movie ID if found, None otherwise.
+    pub async fn find_movie_by_imdb_id(&self, imdb_id: &str) -> Result<Option<u64>> {
+        let url = self.build_url(
+            &format!("find/{}", imdb_id),
+            "&external_source=imdb_id"
+        );
+
+        let resp = self.build_request(&url).send().await?;
+        
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let result: FindByExternalIdResult = resp.json().await?;
+        
+        // Return the first movie result's ID if any
+        Ok(result.movie_results.first().map(|m| m.id))
+    }
+
+    /// Find TV show by IMDB ID using TMDB's find API.
+    pub async fn find_tv_by_imdb_id(&self, imdb_id: &str) -> Result<Option<u64>> {
+        let url = self.build_url(
+            &format!("find/{}", imdb_id),
+            "&external_source=imdb_id"
+        );
+
+        let resp = self.build_request(&url).send().await?;
+        
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let result: FindByExternalIdResult = resp.json().await?;
+        
+        // Return the first TV result's ID if any
+        Ok(result.tv_results.first().map(|t| t.id))
     }
 
     /// Search for TV shows.
