@@ -294,7 +294,7 @@ CN_China/
 
 If you have an NVIDIA GPU, enable GPU acceleration for faster AI inference:
 
-See [Ollama GPU Setup Guide](docs/zh/04-ollama-gpu-setup.md)
+See [GPU Setup Guide](docs/en/06-gpu-setup.md)
 
 ### Quick Check
 
@@ -329,13 +329,21 @@ ollama serve 2>&1 | grep -i "inference compute"
 
 ## Documentation
 
-- [Design Document](docs/zh/01-design-preparation.md)
-- [Architecture Design](docs/zh/02-architecture-design.md)
-- [Implementation Plan](docs/zh/03-implementation-plan.md)
-- [GPU Setup Guide](docs/zh/04-ollama-gpu-setup.md)
-- [E2E Testing Report](docs/zh/05-e2e-testing-report.md)
-- [Central Index Design](docs/zh/06-central-index-design.md)
-- [Export/Import Design](docs/zh/07-config-export-import-design.md)
+### English
+- [Overview](docs/en/01-overview.md)
+- [Architecture](docs/en/02-architecture.md)
+- [Processing Flow](docs/en/03-processing-flow.md)
+- [Central Index](docs/en/04-central-index.md)
+- [Export/Import](docs/en/05-export-import.md)
+- [GPU Setup](docs/en/06-gpu-setup.md)
+
+### Chinese (中文)
+- [Overview (概述)](docs/zh/01-overview.md)
+- [Architecture (架构设计)](docs/zh/02-architecture.md)
+- [Processing Flow (处理流程)](docs/zh/03-processing-flow.md)
+- [Central Index (中央索引)](docs/zh/04-central-index.md)
+- [Export/Import (导入导出)](docs/zh/05-export-import.md)
+- [GPU Setup (GPU配置)](docs/zh/06-gpu-setup.md)
 
 ## License
 

@@ -285,3 +285,81 @@ Processing flow:
 [OK] Plan generated: 268 items, 8 unknown
 ```
 
+---
+
+## 9. Performance Optimizations
+
+### 9.1 Parallel Processing
+
+| Operation | Parallelization |
+|-----------|-----------------|
+| ffprobe calls | Parallel with `futures::join_all` |
+| Poster downloads | Parallel with `futures::join_all` |
+| TMDB API | Sequential (API rate limiting) |
+
+### 9.2 Caching Strategy
+
+| Cache Type | Scope | Content |
+|------------|-------|---------|
+| TV Show cache | Same directory | Show metadata |
+| Season cache | Same show/season | All episode details |
+| TMDB search cache | Optional | Search results (not implemented) |
+
+### 9.3 Organized File Fast Path
+
+For already-organized files, the system:
+
+1. **Skips AI parsing** - Extracts TMDB ID directly from filename/folder
+2. **Uses cache** - Multiple files from same show share metadata cache
+3. **Direct TMDB query** - Uses ID to get details, no search needed
+
+**Performance improvement**:
+- 40 organized files: ~90s -> ~3s (approximately 30x faster)
+- Avoids redundant AI calls and TMDB searches
+
+### 9.4 TMDB ID Extraction from Parent
+
+When filename doesn't contain TMDB ID, system extracts from parent folder:
+
+```
+Movies_organized/CN_China/[Avatar](2009)-tt0499549-tmdb19995/
+  |-- [Avatar](2009)-1080p-WEB-DL.mp4  <- Gets tmdb19995 from parent
+```
+
+---
+
+## 10. Implementation Status
+
+### 10.1 Unified Metadata Extraction (Implemented)
+
+`CandidateMetadata` struct in `src/core/metadata.rs`:
+
+```rust
+pub struct CandidateMetadata {
+    pub chinese_title: Option<String>,
+    pub english_title: Option<String>,
+    pub year: Option<u16>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub tmdb_id: Option<u64>,
+    pub imdb_id: Option<String>,
+    pub source: Option<MetadataSource>,
+    pub confidence: f32,
+    // ... other fields
+}
+```
+
+### 10.2 Directory Type Classification (Implemented)
+
+Smart directory classification in `src/core/metadata.rs`:
+
+```rust
+pub enum DirectoryType {
+    TitleDirectory(TitleInfo),
+    SeasonDirectory(u32),
+    QualityDirectory,
+    CategoryDirectory,
+    OrganizedDirectory(OrganizedInfo),
+    Unknown,
+}
+
