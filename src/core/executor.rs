@@ -359,18 +359,15 @@ impl Executor {
     }
 
     /// Execute move operation.
+    /// 
+    /// Optimization: For same-filesystem moves (rename), skip checksum verification
+    /// since rename is atomic and doesn't copy data. Only verify for cross-filesystem
+    /// moves which require actual data copy.
     fn execute_move(&self, op: &Operation) -> Result<Option<RollbackOperation>> {
         let from = op.from.as_ref().ok_or_else(|| {
             crate::Error::ExecuteError("Move operation missing 'from' path".to_string())
         })?;
         let to = &op.to;
-
-        // Calculate checksum before move
-        let checksum = if self.config.verify_checksum {
-            Some(hash::sha256_file(from)?)
-        } else {
-            None
-        };
 
         // Create parent directory if needed
         if let Some(parent) = to.parent() {
@@ -379,21 +376,63 @@ impl Executor {
             }
         }
 
-        // Move file
-        fs::rename(from, to)?;
-        tracing::debug!("Moved: {:?} -> {:?}", from, to);
+        // Try atomic rename first (same filesystem, instant)
+        match fs::rename(from, to) {
+            Ok(()) => {
+                // Rename succeeded - same filesystem, no checksum needed
+                tracing::debug!("Moved (rename): {:?} -> {:?}", from, to);
+                return Ok(Some(RollbackOperation {
+                    seq: 0,
+                    op_type: RollbackOpType::Move,
+                    from: from.clone(),
+                    to: to.clone(),
+                    checksum: None, // No checksum for atomic rename
+                    rollback: RollbackAction {
+                        op: RollbackActionType::Move,
+                        path: to.clone(),
+                        to: Some(from.clone()),
+                    },
+                    executed: false,
+                }));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+                // Cross-filesystem move: need to copy + delete
+                tracing::debug!("Cross-filesystem move detected, using copy+delete");
+            }
+            Err(e) => {
+                return Err(crate::Error::ExecuteError(
+                    format!("Failed to move {:?}: {}", from, e)
+                ));
+            }
+        }
 
-        // Verify checksum after move
+        // Cross-filesystem move: copy with optional checksum verification
+        let checksum = if self.config.verify_checksum {
+            Some(hash::sha256_file(from)?)
+        } else {
+            None
+        };
+
+        // Copy file
+        fs::copy(from, to)?;
+        
+        // Verify checksum after copy (only for cross-filesystem)
         if self.config.verify_checksum {
             if let Some(ref original_checksum) = checksum {
                 let new_checksum = hash::sha256_file(to)?;
                 if original_checksum != &new_checksum {
+                    // Remove incomplete copy
+                    let _ = fs::remove_file(to);
                     return Err(crate::Error::ExecuteError(
-                        format!("Checksum mismatch after moving: {:?}", to)
+                        format!("Checksum mismatch after copying: {:?}", to)
                     ));
                 }
             }
         }
+
+        // Delete original after successful copy
+        fs::remove_file(from)?;
+        tracing::debug!("Moved (copy+delete): {:?} -> {:?}", from, to);
 
         Ok(Some(RollbackOperation {
             seq: 0,
