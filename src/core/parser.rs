@@ -586,10 +586,25 @@ pub fn is_organized_filename(filename: &str) -> bool {
         }
     }
     
-    // Movie pattern: [Title](Year)-tt...-tmdb...-
+    // Movie pattern with TMDB ID: [Title](Year)-tt...-tmdb...-
     // or [Title][Title](Year)-tt...-tmdb...-
-    let movie_pattern = regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-(?:tt\d+)?-?tmdb\d+-").ok();
-    if let Some(re) = movie_pattern {
+    let movie_pattern_with_id = regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-(?:tt\d+)?-?tmdb\d+-").ok();
+    if let Some(re) = movie_pattern_with_id {
+        if re.is_match(filename) {
+            return true;
+        }
+    }
+    
+    // Movie pattern with technical info (no TMDB ID in filename):
+    // [Title](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.ext
+    // [Title][Title](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.ext
+    // Examples:
+    //   [Upgrade][升级](2018)-1080p-WEB-DL-h264-8bit-aac-2.0.mp4
+    //   [焚城](2024)-2160p-WEB-DL-hevc-8bit-aac-2.0.mp4
+    let movie_pattern_with_tech = regex::Regex::new(
+        r"^\[.+\](?:\[.+\])?\(\d{4}\)-\d{3,4}p-"
+    ).ok();
+    if let Some(re) = movie_pattern_with_tech {
         if re.is_match(filename) {
             return true;
         }
@@ -623,33 +638,65 @@ pub fn parse_organized_tvshow_filename(filename: &str) -> Option<OrganizedTvShow
 /// or: `[Title](Year)-tt12345-tmdb67890-1080p-...`
 /// Returns: (original_title, title, year, imdb_id, tmdb_id)
 pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieInfo> {
-    // Try two-title format first: [English][Chinese](Year)
-    let re_two = regex::Regex::new(
+    // Try two-title format with TMDB ID: [English][Chinese](Year)-ttIMDB-tmdbID-
+    let re_two_with_id = regex::Regex::new(
         r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
     ).ok()?;
     
-    if let Some(caps) = re_two.captures(filename) {
+    if let Some(caps) = re_two_with_id.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
             title: Some(caps.get(2)?.as_str().to_string()),
             year: caps.get(3)?.as_str().parse().ok()?,
             imdb_id: caps.get(4).map(|m| format!("tt{}", m.as_str())),
-            tmdb_id: caps.get(5)?.as_str().parse().ok()?,
+            tmdb_id: Some(caps.get(5)?.as_str().parse().ok()?),
         });
     }
     
-    // Single-title format: [Title](Year)
-    let re_one = regex::Regex::new(
+    // Single-title format with TMDB ID: [Title](Year)-ttIMDB-tmdbID-
+    let re_one_with_id = regex::Regex::new(
         r"^\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
     ).ok()?;
     
-    if let Some(caps) = re_one.captures(filename) {
+    if let Some(caps) = re_one_with_id.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
             title: None,
             year: caps.get(2)?.as_str().parse().ok()?,
             imdb_id: caps.get(3).map(|m| format!("tt{}", m.as_str())),
-            tmdb_id: caps.get(4)?.as_str().parse().ok()?,
+            tmdb_id: Some(caps.get(4)?.as_str().parse().ok()?),
+        });
+    }
+    
+    // Two-title format with technical info (no TMDB ID): [English][Chinese](Year)-Resolution-...
+    // Example: [Upgrade][升级](2018)-1080p-WEB-DL-h264-8bit-aac-2.0.mp4
+    let re_two_tech = regex::Regex::new(
+        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-"
+    ).ok()?;
+    
+    if let Some(caps) = re_two_tech.captures(filename) {
+        return Some(OrganizedMovieInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: Some(caps.get(2)?.as_str().to_string()),
+            year: caps.get(3)?.as_str().parse().ok()?,
+            imdb_id: None,
+            tmdb_id: None, // Will be filled from parent folder
+        });
+    }
+    
+    // Single-title format with technical info: [Title](Year)-Resolution-...
+    // Example: [焚城](2024)-2160p-WEB-DL-hevc-8bit-aac-2.0.mp4
+    let re_one_tech = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-"
+    ).ok()?;
+    
+    if let Some(caps) = re_one_tech.captures(filename) {
+        return Some(OrganizedMovieInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: None,
+            year: caps.get(2)?.as_str().parse().ok()?,
+            imdb_id: None,
+            tmdb_id: None, // Will be filled from parent folder
         });
     }
     
@@ -672,7 +719,8 @@ pub struct OrganizedMovieInfo {
     pub title: Option<String>,
     pub year: u16,
     pub imdb_id: Option<String>,
-    pub tmdb_id: u64,
+    /// TMDB ID. None if not present in filename (needs to be extracted from parent folder).
+    pub tmdb_id: Option<u64>,
 }
 
 /// Information extracted from an organized TV show folder name.
@@ -682,6 +730,74 @@ pub struct OrganizedTvShowFolderInfo {
     pub year: Option<u16>,
     pub imdb_id: Option<String>,
     pub tmdb_id: u64,
+}
+
+/// Information extracted from an organized movie folder name.
+#[derive(Debug, Clone)]
+pub struct OrganizedMovieFolderInfo {
+    pub original_title: Option<String>,
+    pub title: Option<String>,
+    pub year: u16,
+    pub imdb_id: Option<String>,
+    pub tmdb_id: u64,
+}
+
+/// Parse an organized movie folder name to extract metadata.
+/// 
+/// Supported formats:
+/// - `[Title](Year)-ttIMDB-tmdbID` - single title
+/// - `[OriginalTitle][ChineseTitle](Year)-ttIMDB-tmdbID` - dual title
+/// 
+/// Examples:
+/// - `[Upgrade][升级](2018)-tt6499752-tmdb500664`
+/// - `[焚城](2024)-tt29495090-tmdb1305642`
+pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolderInfo> {
+    // Pattern 1: Dual title: [Original][Chinese](Year)-ttIMDB-tmdbID
+    let re_dual = regex::Regex::new(
+        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_dual.captures(dirname) {
+        return Some(OrganizedMovieFolderInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: Some(caps.get(2)?.as_str().to_string()),
+            year: caps.get(3)?.as_str().parse().ok()?,
+            imdb_id: Some(format!("tt{}", caps.get(4)?.as_str())),
+            tmdb_id: caps.get(5)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Pattern 2: Single title: [Title](Year)-ttIMDB-tmdbID
+    let re_single = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_single.captures(dirname) {
+        return Some(OrganizedMovieFolderInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: None,
+            year: caps.get(2)?.as_str().parse().ok()?,
+            imdb_id: Some(format!("tt{}", caps.get(3)?.as_str())),
+            tmdb_id: caps.get(4)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Pattern 3: Single title without IMDB: [Title](Year)-tmdbID
+    let re_single_no_imdb = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_single_no_imdb.captures(dirname) {
+        return Some(OrganizedMovieFolderInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: None,
+            year: caps.get(2)?.as_str().parse().ok()?,
+            imdb_id: None,
+            tmdb_id: caps.get(3)?.as_str().parse().ok()?,
+        });
+    }
+    
+    None
 }
 
 /// Check if a folder name matches the organized TV show folder format.
@@ -700,10 +816,52 @@ pub fn is_organized_tvshow_folder(dirname: &str) -> bool {
 
 /// Parse an organized TV show folder name to extract metadata.
 /// 
-/// Format: `[Title](Year)-ttIMDB-tmdbID` or `[Title](Year)-tmdbID`
-/// Example: `[罚罪2](2025)-tt36771056-tmdb296146`
+/// Supported formats:
+/// - `[Title](Year)-ttIMDB-tmdbID` - single title with IMDB
+/// - `[Title](Year)-tmdbID` - single title without IMDB
+/// - `[OriginalTitle][ChineseTitle](Year)-ttIMDB-tmdbID` - dual title with IMDB
+/// - `[OriginalTitle][ChineseTitle]-ttIMDB-tmdbID` - dual title without year
+/// 
+/// Examples:
+/// - `[罚罪2](2025)-tt36771056-tmdb296146`
+/// - `[러브 미][爱我](2025)-tt35451747-tmdb275989`
+/// - `[러브 미][ ]-tt35451747-tmdb275989` (empty Chinese title)
 pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFolderInfo> {
-    // Pattern with IMDB: [Title](Year)-ttIMDB-tmdbID
+    // Pattern 1: Dual title with year and IMDB: [Original][Chinese](Year)-ttIMDB-tmdbID
+    let re_dual_with_year_imdb = regex::Regex::new(
+        r"^\[([^\]]+)\]\[([^\]]*)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_dual_with_year_imdb.captures(dirname) {
+        let original = caps.get(1)?.as_str().to_string();
+        let chinese = caps.get(2)?.as_str().trim().to_string();
+        let title = if chinese.is_empty() { original.clone() } else { chinese };
+        return Some(OrganizedTvShowFolderInfo {
+            title,
+            year: caps.get(3)?.as_str().parse().ok(),
+            imdb_id: Some(format!("tt{}", caps.get(4)?.as_str())),
+            tmdb_id: caps.get(5)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Pattern 2: Dual title without year: [Original][Chinese]-ttIMDB-tmdbID
+    let re_dual_no_year = regex::Regex::new(
+        r"^\[([^\]]+)\]\[([^\]]*)\]-tt(\d+)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_dual_no_year.captures(dirname) {
+        let original = caps.get(1)?.as_str().to_string();
+        let chinese = caps.get(2)?.as_str().trim().to_string();
+        let title = if chinese.is_empty() { original.clone() } else { chinese };
+        return Some(OrganizedTvShowFolderInfo {
+            title,
+            year: None,
+            imdb_id: Some(format!("tt{}", caps.get(3)?.as_str())),
+            tmdb_id: caps.get(4)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Pattern 3: Single title with year and IMDB: [Title](Year)-ttIMDB-tmdbID
     let re_with_imdb = regex::Regex::new(
         r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
     ).ok()?;
@@ -717,7 +875,7 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
         });
     }
     
-    // Pattern without IMDB: [Title](Year)-tmdbID
+    // Pattern 4: Single title without IMDB: [Title](Year)-tmdbID
     let re_no_imdb = regex::Regex::new(
         r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
     ).ok()?;

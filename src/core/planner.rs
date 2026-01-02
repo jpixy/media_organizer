@@ -360,6 +360,7 @@ impl Planner {
                 video,
                 target,
                 media_type,
+                cached_show,  // Pass cached show to avoid redundant TMDB calls
                 season_cache,
                 precomputed_ffprobe,
             ).await;
@@ -542,6 +543,7 @@ impl Planner {
         video: &VideoFile,
         target: &Path,
         media_type: MediaType,
+        cached_show: Option<&TvShowMetadata>,  // Use cached show to avoid redundant TMDB calls
         season_cache: &SeasonEpisodesCache,
         precomputed_ffprobe: Option<&VideoMetadata>,
     ) -> Result<Option<(PlanItem, Option<TvShowMetadata>)>> {
@@ -559,30 +561,29 @@ impl Planner {
                 // Try to extract TMDB ID from parent folder names (may be nested like Show/Season 01/)
                 let folder_info = self.find_organized_tvshow_folder(&video.parent_dir);
                 
-                let show_meta = if let Some(ref folder) = folder_info {
-                    // Use TMDB ID directly from folder name
+                // OPTIMIZATION: Use cached show if available and TMDB ID matches
+                let show_meta = if let Some(cached) = cached_show {
+                    // Verify TMDB ID matches (if we have folder info)
+                    if let Some(ref folder) = folder_info {
+                        if cached.tmdb_id == folder.tmdb_id {
+                            tracing::debug!(
+                                "[ORGANIZED] Using cached show for: {} S{:02}E{:02}",
+                                info.title, info.season, info.episode
+                            );
+                            cached.clone()
+                        } else {
+                            // TMDB ID mismatch, fetch fresh data
+                            self.fetch_tvshow_by_id(folder.tmdb_id).await?
+                        }
+                    } else {
+                        // No folder info, trust the cache
+                        cached.clone()
+                    }
+                } else if let Some(ref folder) = folder_info {
+                    // No cache, fetch by TMDB ID from folder
                     println!("    [ORGANIZED] Re-indexing TV via ID: {} S{:02}E{:02} (tmdb{})", 
                         folder.title, info.season, info.episode, folder.tmdb_id);
-                    
-                    let tmdb = match self.tmdb_client.as_ref() {
-                        Some(client) => client,
-                        None => {
-                            tracing::warn!("[ORGANIZED] TMDB client not initialized");
-                            return Ok(None);
-                        }
-                    };
-                    
-                    // Fetch TV show details directly by TMDB ID
-                    match tmdb.get_tv_details(folder.tmdb_id).await {
-                        Ok(details) => {
-                            self.build_tvshow_metadata_from_details(&details)
-                        }
-                        Err(e) => {
-                            tracing::warn!("[ORGANIZED] Failed to fetch TV details for tmdb{}: {}", 
-                                folder.tmdb_id, e);
-                            return Ok(None);
-                        }
-                    }
+                    self.fetch_tvshow_by_id(folder.tmdb_id).await?
                 } else {
                     // Fall back to searching by title
                     println!("    [ORGANIZED] Re-indexing TV: {} S{:02}E{:02}", 
@@ -629,7 +630,7 @@ impl Planner {
             }
             MediaType::Movies => {
                 // Parse organized movie filename
-                let info = match parser::parse_organized_movie_filename(&video.filename) {
+                let mut info = match parser::parse_organized_movie_filename(&video.filename) {
                     Some(info) => info,
                     None => {
                         tracing::warn!("[ORGANIZED] Could not parse movie format: {}", video.filename);
@@ -637,10 +638,32 @@ impl Planner {
                     }
                 };
                 
+                // If tmdb_id is None, try to extract from parent folder
+                // This handles files with technical info format: [Title](Year)-1080p-...
+                let tmdb_id = match info.tmdb_id {
+                    Some(id) => id,
+                    None => {
+                        if let Some(folder_info) = self.find_organized_movie_folder(&video.parent_dir) {
+                            tracing::debug!(
+                                "[ORGANIZED] Extracted TMDB ID {} from parent folder for: {}",
+                                folder_info.tmdb_id,
+                                video.filename
+                            );
+                            if info.imdb_id.is_none() {
+                                info.imdb_id = folder_info.imdb_id;
+                            }
+                            folder_info.tmdb_id
+                        } else {
+                            tracing::warn!("[ORGANIZED] Could not find TMDB ID for: {}", video.filename);
+                            return Ok(None);
+                        }
+                    }
+                };
+                
                 println!("    [ORGANIZED] Re-indexing movie: {} ({}), tmdb{}", 
                     info.original_title.as_deref().unwrap_or("?"), 
                     info.year, 
-                    info.tmdb_id
+                    tmdb_id
                 );
                 
                 // Fetch movie details directly using TMDB ID
@@ -651,8 +674,8 @@ impl Planner {
                         return Ok(None);
                     }
                 };
-                let details = tmdb.get_movie_details(info.tmdb_id).await?;
-                let credits = tmdb.get_movie_credits(info.tmdb_id).await.ok();
+                let details = tmdb.get_movie_details(tmdb_id).await?;
+                let credits = tmdb.get_movie_credits(tmdb_id).await.ok();
                 
                 // Build movie metadata
                 let metadata = self.build_movie_metadata_from_details(&details, credits.as_ref());
@@ -983,6 +1006,37 @@ impl Planner {
         }
         
         None
+    }
+    
+    /// Find an organized movie folder by searching parent directories.
+    fn find_organized_movie_folder(&self, start_dir: &Path) -> Option<parser::OrganizedMovieFolderInfo> {
+        let mut current = Some(start_dir);
+        
+        while let Some(dir) = current {
+            if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+                // Try to parse as organized folder
+                if let Some(info) = parser::parse_organized_movie_folder(name) {
+                    tracing::debug!("Found organized movie folder: {} (tmdb{})", name, info.tmdb_id);
+                    return Some(info);
+                }
+            }
+            current = dir.parent();
+        }
+        
+        None
+    }
+    
+    /// Fetch TV show metadata by TMDB ID.
+    async fn fetch_tvshow_by_id(&self, tmdb_id: u64) -> Result<TvShowMetadata> {
+        let tmdb = match self.tmdb_client.as_ref() {
+            Some(client) => client,
+            None => {
+                return Err(crate::error::Error::Other("TMDB client not initialized".to_string()));
+            }
+        };
+        
+        let details = tmdb.get_tv_details(tmdb_id).await?;
+        Ok(self.build_tvshow_metadata_from_details(&details))
     }
     
     /// Build TvShowMetadata from TMDB TvDetails (used for organized files with TMDB ID).
@@ -1499,7 +1553,7 @@ impl Planner {
                     english_title: movie_info.original_title,
                     chinese_title: movie_info.title,
                     year: Some(movie_info.year),
-                    tmdb_id: Some(movie_info.tmdb_id),
+                    tmdb_id: movie_info.tmdb_id,
                     imdb_id: movie_info.imdb_id,
                     source: Some(metadata::MetadataSource::OrganizedFilename),
                     confidence: 1.0,
