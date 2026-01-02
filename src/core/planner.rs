@@ -1856,9 +1856,22 @@ impl Planner {
             None => return Ok(None),
         };
 
-        // Extract Chinese and English titles
-        let chinese_title = parsed.title.clone().filter(|t| !t.is_empty());
-        let english_title = parsed.original_title.clone().filter(|t| !t.is_empty());
+        // Extract Chinese and English titles, filtering out meaningless ones
+        let chinese_title = parsed.title.clone()
+            .filter(|t| !t.is_empty())
+            .filter(|t| self.is_meaningful_title(t));
+        let english_title = parsed.original_title.clone()
+            .filter(|t| !t.is_empty())
+            .filter(|t| self.is_meaningful_title(t));
+
+        // If both titles are meaningless, we can't search
+        if chinese_title.is_none() && english_title.is_none() {
+            tracing::warn!(
+                "Both titles are meaningless, cannot search TMDB: chinese={:?}, english={:?}",
+                parsed.title, parsed.original_title
+            );
+            return Ok(None);
+        }
 
         tracing::debug!(
             "TMDB movie search: chinese={:?}, english={:?}, year={:?}",
@@ -1920,7 +1933,11 @@ impl Planner {
         if !english_results.is_empty() {
             let query = english_title.as_deref().unwrap_or("");
             if let Some(best) = self.select_best_movie_match(&english_results, query) {
-                if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
+                if self.is_reasonable_match_with_year(
+                    query, &best.title, &best.original_title, 
+                    parsed.year, tmdb_year
+                ) {
                     tracing::info!("TMDB found (English match): {}", best.title);
                     return self.get_movie_details(client, best.id).await;
                 }
@@ -1931,7 +1948,11 @@ impl Planner {
         if !chinese_results.is_empty() {
             let query = chinese_title.as_deref().unwrap_or("");
             if let Some(best) = self.select_best_movie_match(&chinese_results, query) {
-                if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
+                if self.is_reasonable_match_with_year(
+                    query, &best.title, &best.original_title,
+                    parsed.year, tmdb_year
+                ) {
                     tracing::info!("TMDB found (Chinese match): {}", best.title);
                     return self.get_movie_details(client, best.id).await;
                 }
@@ -1947,7 +1968,11 @@ impl Planner {
                 let results = client.search_movie(query, parsed.year).await?;
                 if !results.is_empty() {
                     if let Some(best) = self.select_best_movie_match(&results, query) {
-                        if self.is_reasonable_match(query, &best.title, &best.original_title) {
+                        let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
+                        if self.is_reasonable_match_with_year(
+                            query, &best.title, &best.original_title,
+                            parsed.year, tmdb_year
+                        ) {
                             tracing::info!("TMDB found (shortened query): {}", best.title);
                             return self.get_movie_details(client, best.id).await;
                         }
@@ -2029,8 +2054,71 @@ impl Planner {
         Some(results[best_idx])
     }
 
-    /// Check if the TMDB match is reasonable (title similarity).
-    fn is_reasonable_match(&self, query: &str, tmdb_title: &str, tmdb_orig: &str) -> bool {
+    /// Check if a title is meaningful for TMDB search.
+    /// Filters out single-character Chinese titles, common placeholder words, etc.
+    fn is_meaningful_title(&self, title: &str) -> bool {
+        let trimmed = title.trim();
+        
+        // Empty or whitespace only
+        if trimmed.is_empty() {
+            return false;
+        }
+        
+        // Single character (especially problematic for CJK)
+        let char_count = trimmed.chars().count();
+        if char_count <= 1 {
+            tracing::debug!("Filtering meaningless single-char title: '{}'", trimmed);
+            return false;
+        }
+        
+        // Common placeholder/meaningless words
+        const MEANINGLESS_WORDS: &[&str] = &[
+            "无", "是", "的", "了", "在", "有", "和", "与",
+            "null", "none", "unknown", "untitled", "n/a",
+        ];
+        
+        let lower = trimmed.to_lowercase();
+        if MEANINGLESS_WORDS.iter().any(|w| lower == *w) {
+            tracing::debug!("Filtering meaningless placeholder title: '{}'", trimmed);
+            return false;
+        }
+        
+        // Very short titles that look like technical info
+        if char_count <= 3 {
+            // Check if it looks like resolution/format
+            let patterns = ["4k", "hd", "sd", "mp4", "mkv", "avi", "web", "blu"];
+            if patterns.iter().any(|p| lower.contains(p)) {
+                tracing::debug!("Filtering short technical-looking title: '{}'", trimmed);
+                return false;
+            }
+        }
+        
+        true
+    }
+
+    /// Check if the TMDB match is reasonable with year validation.
+    /// query_year: the year from parsed filename
+    /// tmdb_year: the year from TMDB result
+    fn is_reasonable_match_with_year(
+        &self, 
+        query: &str, 
+        tmdb_title: &str, 
+        tmdb_orig: &str,
+        query_year: Option<u16>,
+        tmdb_year: Option<u16>,
+    ) -> bool {
+        // YEAR VALIDATION: If both years are known, they should be close
+        if let (Some(qy), Some(ty)) = (query_year, tmdb_year) {
+            let diff = (qy as i32 - ty as i32).abs();
+            if diff > 1 {
+                tracing::debug!(
+                    "Year mismatch too large: query={}, tmdb={}, diff={}",
+                    qy, ty, diff
+                );
+                return false;
+            }
+        }
+        
         let query_lower = query.to_lowercase();
         let title_lower = tmdb_title.to_lowercase();
         let orig_lower = tmdb_orig.to_lowercase();
@@ -2044,12 +2132,28 @@ impl Planner {
         }
 
         // Check for significant word overlap (for CJK languages)
-        let query_chars: std::collections::HashSet<char> = query.chars().collect();
-        let title_chars: std::collections::HashSet<char> = tmdb_title.chars().collect();
+        // But require more overlap for short queries to avoid false matches
+        let query_chars: std::collections::HashSet<char> = query.chars()
+            .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
+            .collect();
+        let title_chars: std::collections::HashSet<char> = tmdb_title.chars()
+            .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
+            .collect();
 
-        // At least 50% character overlap for CJK
         let common = query_chars.intersection(&title_chars).count();
-        let min_len = query_chars.len().min(title_chars.len());
+        let query_len = query_chars.len();
+        let title_len = title_chars.len();
+        let min_len = query_len.min(title_len);
+        
+        // For very short queries (<=3 chars), require exact match
+        if query_len <= 3 {
+            if common == query_len && query_len == title_len {
+                return true;
+            }
+            return false;
+        }
+
+        // For longer queries, require at least 50% character overlap
         if min_len > 0 && common * 2 >= min_len {
             return true;
         }
@@ -2614,6 +2718,14 @@ impl Planner {
         Some(&results[best_idx])
     }
     
+    /// Extract year from TMDB release_date format (YYYY-MM-DD).
+    fn extract_year_from_release_date(release_date: &Option<String>) -> Option<u16> {
+        release_date
+            .as_ref()
+            .and_then(|d| d.split('-').next())
+            .and_then(|y| y.parse().ok())
+    }
+
     /// Normalize title for comparison (lowercase, remove punctuation/spaces).
     fn normalize_title(&self, title: &str) -> String {
         title
