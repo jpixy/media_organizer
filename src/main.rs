@@ -5,7 +5,7 @@
 use clap::Parser;
 use media_organizer::cli::{
     args::{Cli, Commands, PlanType, SessionsAction},
-    commands::{execute, plan, rollback, sessions, verify},
+    commands::{execute, export_import, index, plan, rollback, search, sessions, verify},
 };
 use media_organizer::preflight;
 
@@ -66,6 +66,68 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Verify { path } => {
             verify::verify(&path).await?;
+        }
+
+        Commands::Index { action } => {
+            index::execute_index(action).await?;
+        }
+
+        Commands::Search {
+            title,
+            actor,
+            director,
+            collection,
+            year,
+            genre,
+            country,
+            show_status,
+            format,
+        } => {
+            search::execute_search(
+                title,
+                actor,
+                director,
+                collection,
+                year,
+                genre,
+                country,
+                show_status,
+                format,
+            )
+            .await?;
+        }
+
+        Commands::Export {
+            output,
+            include_secrets,
+            only,
+            exclude,
+            disk,
+            description,
+            auto_name,
+        } => {
+            export_import::execute_export(
+                output,
+                include_secrets,
+                only,
+                exclude,
+                disk,
+                description,
+                auto_name,
+            )
+            .await?;
+        }
+
+        Commands::Import {
+            backup_file,
+            dry_run,
+            only,
+            merge,
+            force,
+            backup_first,
+        } => {
+            export_import::execute_import(backup_file, dry_run, only, merge, force, backup_first)
+                .await?;
         }
     }
 

@@ -123,6 +123,21 @@ pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
         nfo.push_str("  </fanart>\n");
     }
 
+    // Collection/Set (for movie series like "Pirates of the Caribbean")
+    if let Some(ref collection_name) = movie.collection_name {
+        nfo.push_str("  <set>\n");
+        nfo.push_str(&format!("    <name>{}</name>\n", escape_xml(collection_name)));
+        if let Some(ref overview) = movie.collection_overview {
+            nfo.push_str(&format!("    <overview>{}</overview>\n", escape_xml(overview)));
+        }
+        nfo.push_str("  </set>\n");
+    }
+    
+    // TMDB Collection ID (for Kodi/Emby/Jellyfin to fetch collection artwork)
+    if let Some(collection_id) = movie.collection_id {
+        nfo.push_str(&format!("  <tmdbcollectionid>{}</tmdbcollectionid>\n", collection_id));
+    }
+
     nfo.push_str("</movie>\n");
     nfo
 }

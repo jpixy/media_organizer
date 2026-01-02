@@ -1,19 +1,10 @@
-# Ollama GPU 配置指南
+# 06 - Ollama GPU 配置指南
 
-本文档记录了在 Fedora Linux 上配置 Ollama 使用 NVIDIA GPU 的完整过程，包括问题诊断、解决方案和验证步骤。
-
-## 目录
-
-1. [问题描述](#问题描述)
-2. [环境信息](#环境信息)
-3. [诊断步骤](#诊断步骤)
-4. [解决方案](#解决方案)
-5. [验证步骤](#验证步骤)
-6. [常见问题](#常见问题)
+本文档记录了在 Fedora Linux 上配置 Ollama 使用 NVIDIA GPU 的完整过程。
 
 ---
 
-## 问题描述
+## 1. 问题描述
 
 ### 症状
 
@@ -31,7 +22,7 @@ time=2025-12-29T16:48:22.901+08:00 level=INFO source=routes.go:1648 msg="enterin
 
 ---
 
-## 环境信息
+## 2. 环境信息
 
 | 项目 | 版本/信息 |
 |------|----------|
@@ -44,12 +35,11 @@ time=2025-12-29T16:48:22.901+08:00 level=INFO source=routes.go:1648 msg="enterin
 
 ---
 
-## 诊断步骤
+## 3. 诊断步骤
 
 ### 步骤 1: 检查 GPU 硬件
 
 ```bash
-# 检查 PCI 设备中是否有 NVIDIA GPU
 lspci | grep -i nvidia
 ```
 
@@ -61,7 +51,6 @@ lspci | grep -i nvidia
 ### 步骤 2: 检查当前驱动
 
 ```bash
-# 检查当前使用的驱动模块
 lsmod | grep -E "nvidia|nouveau"
 ```
 
@@ -71,58 +60,29 @@ lsmod | grep -E "nvidia|nouveau"
 ### 步骤 3: 检查 nvidia-smi
 
 ```bash
-# 检查 NVIDIA 驱动工具
-which nvidia-smi
 nvidia-smi
 ```
 
-如果 `nvidia-smi` 不存在或报错，说明 NVIDIA 驱动未正确安装。
+如果命令不存在或报错，说明 NVIDIA 驱动未正确安装。
 
 ### 步骤 4: 检查 NVML 库
 
 ```bash
-# 检查 libnvidia-ml 库（Ollama 用来检测 GPU）
 ldconfig -p | grep nvidia-ml
 ```
 
 如果没有输出，需要安装 CUDA 库包。
 
-### 步骤 5: 测试 NVML 功能
-
-```python
-# 用 Python 测试 NVML 库能否检测 GPU
-python3 << 'EOF'
-import ctypes
-
-try:
-    nvml = ctypes.CDLL("libnvidia-ml.so.1")
-    result = nvml.nvmlInit_v2()
-    print(f"nvmlInit result: {result} (0 = success)")
-    
-    count = ctypes.c_uint()
-    result = nvml.nvmlDeviceGetCount_v2(ctypes.byref(count))
-    print(f"nvmlDeviceGetCount result: {result}, count: {count.value}")
-    
-    nvml.nvmlShutdown()
-except Exception as e:
-    print(f"Error: {e}")
-EOF
-```
-
-### 步骤 6: 检查 Ollama CUDA 库
+### 步骤 5: 检查 Ollama CUDA 库
 
 ```bash
-# 检查 Ollama 的 CUDA 库是否存在
 ls -la /usr/lib/ollama/cuda_v12/
 ls -la /usr/lib/ollama/cuda_v13/
-
-# 或者旧路径
-ls -la /usr/local/lib/ollama/
 ```
 
 ---
 
-## 解决方案
+## 4. 解决方案
 
 ### 问题 1: NVIDIA 驱动未安装
 
@@ -148,23 +108,14 @@ sudo reboot
 
 ### 问题 2: libnvidia-ml 不在 ldconfig 缓存中
 
-**症状**: NVML 库文件存在但 `ldconfig -p | grep nvidia-ml` 没有输出
-
 **解决方案**:
 
 ```bash
-# 刷新动态链接库缓存
 sudo ldconfig
-
-# 验证
 ldconfig -p | grep nvidia-ml
 ```
 
 ### 问题 3: Ollama CUDA 库缺失
-
-**症状**: `/usr/lib/ollama/` 或 `/usr/local/lib/ollama/` 目录为空
-
-**原因**: Ollama 安装中断或不完整
 
 **解决方案**:
 
@@ -180,8 +131,6 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ### 问题 4: Ollama 使用错误的库路径
 
-**症状**: Ollama 日志显示 `OLLAMA_LIBRARY_PATH=[/usr/local/lib/ollama]` 但库在 `/usr/lib/ollama/`
-
 **解决方案**:
 
 ```bash
@@ -195,7 +144,7 @@ ls -la /usr/local/lib/ollama/cuda_v12/
 
 ---
 
-## 验证步骤
+## 5. 验证步骤
 
 ### 步骤 1: 验证驱动加载
 
@@ -216,7 +165,6 @@ nvidia-smi
 ### 步骤 2: 验证 Ollama GPU 检测
 
 ```bash
-# 启动 Ollama 并检查日志
 ollama serve 2>&1 | head -30
 ```
 
@@ -234,7 +182,7 @@ total="12.0 GiB" available="11.6 GiB"
 curl -s http://localhost:11434/api/generate \
   -d '{"model":"qwen2.5:7b","prompt":"Hello","stream":false}' &
 
-# 等待几秒后检查 GPU 使用
+# 检查 GPU 使用
 sleep 5
 nvidia-smi
 ```
@@ -254,11 +202,11 @@ nvidia-smi
 
 ---
 
-## 常见问题
+## 6. 常见问题
 
 ### Q1: 重启后 GPU 又不工作了
 
-**A**: 检查内核模块是否加载：
+检查内核模块是否加载：
 ```bash
 lsmod | grep nvidia
 ```
@@ -270,27 +218,19 @@ sudo reboot
 
 ### Q2: Ollama 显示 "entering low vram mode"
 
-**A**: 这是正常的，当 GPU 显存 < 20GB 时会显示此消息。只要日志中有 `library=CUDA`，就表示 GPU 正在被使用。
+这是正常的，当 GPU 显存 < 20GB 时会显示此消息。只要日志中有 `library=CUDA`，就表示 GPU 正在被使用。
 
 ### Q3: 如何查看 Ollama 使用的是哪个 CUDA 版本？
 
-**A**: 查看日志中的 `libdirs` 字段：
+查看日志中的 `libdirs` 字段：
 ```
 libdirs=ollama,cuda_v13  # 使用 CUDA 13
 libdirs=ollama,cuda_v12  # 使用 CUDA 12
 ```
 
-### Q4: 如何强制使用特定 CUDA 版本？
+### Q4: [GIN] 日志是什么意思？
 
-**A**: 设置环境变量：
-```bash
-export OLLAMA_LLM_LIBRARY=cuda_v12
-ollama serve
-```
-
-### Q5: [GIN] 日志是什么意思？
-
-**A**: Ollama 使用 Go 语言的 Gin 框架作为 HTTP 服务器。`[GIN]` 日志是 HTTP 请求的访问日志，例如：
+Ollama 使用 Go 语言的 Gin 框架作为 HTTP 服务器。`[GIN]` 日志是 HTTP 请求的访问日志：
 ```
 [GIN] 2025/12/29 - 17:36:45 | 200 | 40.227045034s | 127.0.0.1 | POST "/api/generate"
 ```
@@ -300,43 +240,39 @@ ollama serve
 
 ---
 
-## 快速诊断命令汇总
+## 7. 快速诊断脚本
 
 ```bash
 #!/bin/bash
-echo "=== GPU 硬件检测 ==="
+echo "=== GPU Hardware ==="
 lspci | grep -i nvidia
 
 echo ""
-echo "=== 驱动模块检测 ==="
+echo "=== Driver Module ==="
 lsmod | grep -E "nvidia|nouveau"
 
 echo ""
-echo "=== NVIDIA 驱动工具 ==="
-nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv 2>/dev/null || echo "nvidia-smi 不可用"
+echo "=== NVIDIA Driver ==="
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv 2>/dev/null || echo "nvidia-smi unavailable"
 
 echo ""
-echo "=== NVML 库检测 ==="
+echo "=== NVML Library ==="
 ldconfig -p | grep nvidia-ml
 
 echo ""
-echo "=== Ollama 库检测 ==="
+echo "=== Ollama Libraries ==="
 ls -la /usr/lib/ollama/cuda_v* 2>/dev/null || ls -la /usr/local/lib/ollama/cuda_v* 2>/dev/null
 
 echo ""
-echo "=== Ollama 状态 ==="
-pgrep -x ollama && echo "Ollama 正在运行" || echo "Ollama 未运行"
+echo "=== Ollama Status ==="
+pgrep -x ollama && echo "Ollama is running" || echo "Ollama is not running"
 ```
 
 ---
 
-## 参考链接
+## 8. 参考链接
 
 - [Ollama 官方文档](https://ollama.com/docs)
 - [RPM Fusion NVIDIA 驱动指南](https://rpmfusion.org/Howto/NVIDIA)
 - [NVIDIA CUDA Toolkit 文档](https://developer.nvidia.com/cuda-toolkit)
-
----
-
-*文档更新日期: 2025-12-29*
 

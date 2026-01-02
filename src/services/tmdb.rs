@@ -79,6 +79,18 @@ pub struct MovieDetails {
     pub production_companies: Option<Vec<ProductionCompany>>,
     pub credits: Option<Credits>,
     pub release_dates: Option<ReleaseDates>,
+    /// Collection/Set this movie belongs to.
+    pub belongs_to_collection: Option<MovieCollection>,
+}
+
+/// Movie collection (series of movies).
+#[derive(Debug, Clone, Deserialize)]
+pub struct MovieCollection {
+    pub id: u64,
+    pub name: String,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
 }
 
 /// Release dates container.

@@ -1,30 +1,33 @@
 # Media Organizer
 
-一个智能的媒体文件整理工具，使用 AI 解析文件名并从 TMDB 获取元数据，自动重命名和整理电影/电视剧文件。
+A smart media file organizer that uses AI to parse filenames and fetch metadata from TMDB, automatically renaming and organizing movie/TV show files.
 
-## ✨ 特性
+## Features
 
-- 🤖 **AI 驱动的文件名解析** - 使用本地 Ollama + Qwen 2.5 模型智能识别电影/剧集信息
-- 🎬 **TMDB 元数据** - 自动获取电影详情、海报、导演、演员等信息
-- 📁 **智能重命名** - 按照标准格式重命名文件和文件夹
-- 🔄 **安全操作** - 先生成计划，预览后再执行，支持回滚
-- 🚀 **GPU 加速** - 支持 NVIDIA GPU 加速 AI 推理
-- 📊 **详细日志** - 完整的操作日志和进度显示
+- **AI-powered filename parsing** - Uses local Ollama + Qwen 2.5 model for intelligent movie/show recognition
+- **TMDB metadata** - Auto-fetches movie details, posters, directors, actors, and collection info
+- **Smart renaming** - Renames files and folders in standardized format
+- **Safe operations** - Generate plan first, preview, then execute with full rollback support
+- **GPU acceleration** - Supports NVIDIA GPU for accelerated AI inference
+- **Central indexing** - Build searchable index across multiple disks
+- **Cross-disk search** - Search by title, actor, director, collection, year, genre, country
+- **Export/Import** - Backup and migrate your configuration and indexes
+- **Detailed logging** - Complete operation logs and progress display
 
-## 📋 系统要求
+## System Requirements
 
-- **操作系统**: Linux (Fedora/Ubuntu/Debian)
+- **OS**: Linux (Fedora/Ubuntu/Debian)
 - **Rust**: 1.70+
-- **Ollama**: 0.13+ (用于 AI 推理)
-- **ffprobe**: 用于提取视频技术信息
-- **TMDB API Key**: 需要注册 [TMDB](https://www.themoviedb.org/) 获取
+- **Ollama**: 0.13+ (for AI inference)
+- **ffprobe**: For extracting video technical info
+- **TMDB API Key**: Register at [TMDB](https://www.themoviedb.org/)
 
-### 可选
-- **NVIDIA GPU**: 推荐用于加速 AI 推理（需要 CUDA 驱动）
+### Optional
+- **NVIDIA GPU**: Recommended for accelerated AI inference (requires CUDA driver)
 
-## 🚀 快速开始
+## Quick Start
 
-### 1. 安装依赖
+### 1. Install Dependencies
 
 ```bash
 # Fedora
@@ -33,14 +36,14 @@ sudo dnf install ffmpeg
 # Ubuntu/Debian
 sudo apt install ffmpeg
 
-# 安装 Ollama
+# Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 下载 AI 模型
+# Download AI model
 ollama pull qwen2.5:7b
 ```
 
-### 2. 配置环境变量
+### 2. Configure Environment Variables
 
 ```bash
 export TMDB_API_KEY="your_tmdb_api_key"
@@ -48,164 +51,296 @@ export OLLAMA_BASE_URL="http://localhost:11434"
 export OLLAMA_MODEL="qwen2.5:7b"
 ```
 
-### 3. 编译运行
+### 3. Build and Run
 
 ```bash
 cd media_organizer
 cargo build --release
 
-# 查看帮助
+# View help
 ./target/release/media-organizer --help
 ```
 
-### 4. 整理电影
+### 4. Organize Movies
 
 ```bash
-# 步骤 1: 生成整理计划
+# Step 1: Generate organization plan
 ./target/release/media-organizer plan movies /path/to/movies --target /path/to/organized
 
-# 步骤 2: 查看计划
+# Step 2: Review the plan
 cat plan_*.json
 
-# 步骤 3: 执行计划
+# Step 3: Execute the plan
 ./target/release/media-organizer execute plan_*.json
 
-# 如需回滚
-./target/release/media-organizer rollback <session_id>
+# Rollback if needed
+./target/release/media-organizer rollback rollback_*.json
 ```
 
-## 📖 命令说明
+## Commands
 
-### plan - 生成整理计划
+### plan - Generate Organization Plan
 
 ```bash
 media-organizer plan movies <SOURCE> [OPTIONS]
 media-organizer plan tvshows <SOURCE> [OPTIONS]
 
 Options:
-  -t, --target <TARGET>  目标目录
-  -v, --verbose          详细输出
-  -o, --output <OUTPUT>  计划文件输出路径
-      --skip-preflight   跳过预检查
+  -t, --target <TARGET>  Target directory
+  -v, --verbose          Verbose output
+  -o, --output <OUTPUT>  Plan file output path
+      --skip-preflight   Skip preflight checks
 ```
 
-### execute - 执行计划
+### execute - Execute Plan
 
 ```bash
 media-organizer execute <PLAN_FILE> [OPTIONS]
 
 Options:
-  --dry-run    仅模拟执行，不实际操作
-  --force      跳过确认提示
+  -o, --output <OUTPUT>  Rollback file output path
 ```
 
-### rollback - 回滚操作
+### rollback - Rollback Operations
 
 ```bash
-media-organizer rollback <SESSION_ID>
+media-organizer rollback <ROLLBACK_FILE> [OPTIONS]
+
+Options:
+  --dry-run  Dry run, show what would be done
 ```
 
-### sessions - 查看会话
+### index - Build Central Index
+
+Build a searchable index from organized media directories:
 
 ```bash
-media-organizer sessions          # 列出所有会话
-media-organizer sessions <ID>     # 查看会话详情
+# Scan and index a directory
+media-organizer index scan /path/to/movies --media-type movies
+
+# Scan TV shows
+media-organizer index scan /path/to/tvshows --media-type tvshows
+
+# Custom disk label
+media-organizer index scan /mnt/disk1/movies --disk-label MyDisk1
+
+# Show statistics
+media-organizer index stats
+
+# List contents of a disk
+media-organizer index list JMedia_M05
+
+# Verify index against files
+media-organizer index verify /path/to/movies
+
+# Remove a disk from index
+media-organizer index remove OldDisk --confirm
 ```
 
-### verify - 验证配置
+### search - Search Media Collection
+
+Search across all indexed disks:
 
 ```bash
-media-organizer verify            # 检查所有依赖和配置
+# Search by title
+media-organizer search -t "Inception"
+
+# Search by actor
+media-organizer search -a "Leonardo DiCaprio"
+
+# Search by director
+media-organizer search -d "Christopher Nolan"
+
+# Search by collection/series
+media-organizer search -c "Pirates of the Caribbean"
+
+# Search by year or year range
+media-organizer search -y 2024
+media-organizer search -y 2020-2024
+
+# Search by genre
+media-organizer search -g "Action"
+
+# Search by country
+media-organizer search --country US
+
+# Show disk online/offline status
+media-organizer search -t "Avatar" --show-status
+
+# Output as JSON
+media-organizer search -t "Avatar" --format json
+
+# Combine filters
+media-organizer search -a "Tom Hanks" -y 2000-2020 --country US
 ```
 
-## 📁 输出格式
+### export - Export Configuration
 
-### 电影文件夹结构
+Backup your configuration and indexes:
+
+```bash
+# Full export with auto-generated filename
+media-organizer export --auto-name
+
+# Export to specific file
+media-organizer export backup.zip
+
+# Include sensitive data (API keys)
+media-organizer export backup.zip --include-secrets
+
+# Only export indexes
+media-organizer export backup.zip --only indexes
+
+# Only export specific disk
+media-organizer export backup.zip --disk JMedia_M05
+
+# Add description
+media-organizer export backup.zip --description "Pre-migration backup"
+
+# Exclude sessions (reduce size)
+media-organizer export backup.zip --exclude sessions
+```
+
+### import - Import Configuration
+
+Restore configuration and indexes from backup:
+
+```bash
+# Preview what will be imported
+media-organizer import backup.zip --dry-run
+
+# Full import
+media-organizer import backup.zip --force
+
+# Merge with existing data
+media-organizer import backup.zip --merge
+
+# Backup existing config first
+media-organizer import backup.zip --backup-first --force
+
+# Only import indexes
+media-organizer import backup.zip --only indexes
+```
+
+### sessions - Manage Sessions
+
+```bash
+media-organizer sessions list    # List all sessions
+media-organizer sessions show <ID>  # Show session details
+```
+
+### verify - Verify Configuration
+
+```bash
+media-organizer verify <PATH>    # Verify video files
+```
+
+## Output Format
+
+### Movie Folder Structure
 
 ```
 Movies_organized/
-└── [电影名称](年份)-ttIMDB_ID-tmdbTMDB_ID/
-    ├── [电影名称](年份)-分辨率-格式-编码-位深-音频-声道.mp4
+└── CN_China/
+    └── [Movie Name](Year)-ttIMDB_ID-tmdbTMDB_ID/
+        ├── [Movie Name](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.mp4
+        ├── movie.nfo
+        └── poster.jpg
+```
+
+### TV Show Folder Structure
+
+```
+TV_Shows_organized/
+└── US_UnitedStates/
+    └── [Show Name](Year)-ttIMDB_ID-tmdbTMDB_ID/
+        ├── Season 01/
+        │   ├── [Show Name]-S01E01-Episode Name-1080p-WEB-DL.mp4
+        │   └── ...
+        ├── tvshow.nfo
+        └── poster.jpg
+```
+
+### Example
+
+```
+CN_China/
+└── [刺杀小说家2](2025)-tt33095008-tmdb945801/
+    ├── [刺杀小说家2](2025)-2160p-BluRay-hevc-8bit-dts-5.1.mp4
     ├── movie.nfo
     └── poster.jpg
 ```
 
-### 示例
+## Configuration
 
-```
-[刺杀小说家2](2025)-tt33095008-tmdb945801/
-├── [刺杀小说家2](2025)-2160p-BluRay-hevc-8bit-dts-5.1.mp4
-├── movie.nfo
-└── poster.jpg
-```
+### Environment Variables
 
-## ⚙️ 配置
-
-### 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `TMDB_API_KEY` | TMDB API 密钥 | (必需) |
-| `OLLAMA_BASE_URL` | Ollama 服务地址 | `http://localhost:11434` |
-| `OLLAMA_MODEL` | AI 模型名称 | `qwen2.5:7b` |
-| `RUST_LOG` | 日志级别 | `info` |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TMDB_API_KEY` | TMDB API key | (required) |
+| `TMDB_BEARER_TOKEN` | TMDB Bearer token (v4) | (optional) |
+| `OLLAMA_BASE_URL` | Ollama service URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | AI model name | `qwen2.5:7b` |
+| `RUST_LOG` | Log level | `info` |
 
 ### TMDB API Key
 
-1. 注册 [TMDB 账户](https://www.themoviedb.org/signup)
-2. 进入 [API 设置](https://www.themoviedb.org/settings/api)
-3. 申请 API Key (v3 auth)
-4. 设置环境变量: `export TMDB_API_KEY="your_key"`
+1. Register at [TMDB](https://www.themoviedb.org/signup)
+2. Go to [API Settings](https://www.themoviedb.org/settings/api)
+3. Apply for API Key (v3 auth)
+4. Set environment variable: `export TMDB_API_KEY="your_key"`
 
-## 🔧 GPU 配置
+## GPU Configuration
 
-如果你有 NVIDIA GPU，可以启用 GPU 加速以提高 AI 推理速度：
+If you have an NVIDIA GPU, enable GPU acceleration for faster AI inference:
 
-详见 [Ollama GPU 配置指南](docs/04-ollama-gpu-setup.md)
+See [Ollama GPU Setup Guide](docs/zh/04-ollama-gpu-setup.md)
 
-### 快速检查
+### Quick Check
 
 ```bash
-# 检查 GPU
+# Check GPU
 nvidia-smi
 
-# 检查 Ollama GPU 状态
+# Check Ollama GPU status
 ollama serve 2>&1 | grep -i "inference compute"
-# 应显示: library=CUDA
+# Should show: library=CUDA
 ```
 
-## 📊 性能
+## Performance
 
-| 模式 | AI 解析时间 (每文件) |
-|------|---------------------|
-| CPU | 30-60 秒 |
-| GPU (RTX 3500) | 1-2 秒 |
+| Mode | AI Parse Time (per file) |
+|------|--------------------------|
+| CPU | 30-60 seconds |
+| GPU (RTX 3500) | 1-2 seconds |
 
-## 🐛 故障排除
+## Troubleshooting
 
-### AI 解析超时
-- 检查 Ollama 是否运行: `pgrep ollama`
-- 检查 GPU 是否启用: 查看 Ollama 日志中是否有 `library=CUDA`
+### AI Parse Timeout
+- Check if Ollama is running: `pgrep ollama`
+- Check if GPU is enabled: Look for `library=CUDA` in Ollama logs
 
-### TMDB API 错误
-- 检查 API Key 是否正确
-- 检查网络连接（可能需要代理）
+### TMDB API Error
+- Check if API Key is correct
+- Check network connection (may need proxy in some regions)
 
-### 视频信息提取失败
-- 确保 ffprobe 已安装: `which ffprobe`
+### Video Info Extraction Failed
+- Ensure ffprobe is installed: `which ffprobe`
 
-## 📄 文档
+## Documentation
 
-- [设计文档](docs/01-design-preparation.md)
-- [架构设计](docs/02-architecture-design.md)
-- [实现计划](docs/03-implementation-plan.md)
-- [GPU 配置指南](docs/04-ollama-gpu-setup.md)
+- [Design Document](docs/zh/01-design-preparation.md)
+- [Architecture Design](docs/zh/02-architecture-design.md)
+- [Implementation Plan](docs/zh/03-implementation-plan.md)
+- [GPU Setup Guide](docs/zh/04-ollama-gpu-setup.md)
+- [E2E Testing Report](docs/zh/05-e2e-testing-report.md)
+- [Central Index Design](docs/zh/06-central-index-design.md)
+- [Export/Import Design](docs/zh/07-config-export-import-design.md)
 
-## 📜 许可证
+## License
 
 MIT License
 
-## 🤝 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
-
+Issues and Pull Requests are welcome!

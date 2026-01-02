@@ -1,0 +1,742 @@
+//! Central index management - scanning, building, and searching.
+
+use crate::models::index::{
+    CentralIndex, CollectionInfo, DiskIndex, MovieEntry, TvShowEntry,
+};
+use anyhow::{Context, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+/// Configuration directory path.
+fn config_dir() -> Result<PathBuf> {
+    let config = dirs::config_dir()
+        .context("Failed to get config directory")?
+        .join("media_organizer");
+    Ok(config)
+}
+
+/// Path to central index file.
+pub fn central_index_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("central_index.json"))
+}
+
+/// Path to disk indexes directory.
+pub fn disk_indexes_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join("disk_indexes"))
+}
+
+/// Load central index from disk.
+pub fn load_central_index() -> Result<CentralIndex> {
+    let path = central_index_path()?;
+    if path.exists() {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read central index: {}", path.display()))?;
+        let index: CentralIndex = serde_json::from_str(&content)
+            .with_context(|| "Failed to parse central index")?;
+        Ok(index)
+    } else {
+        Ok(CentralIndex::default())
+    }
+}
+
+/// Save central index to disk.
+pub fn save_central_index(index: &CentralIndex) -> Result<()> {
+    let path = central_index_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    
+    // Backup existing file
+    if path.exists() {
+        let backup_path = path.with_extension("json.backup");
+        fs::copy(&path, &backup_path)?;
+    }
+    
+    let content = serde_json::to_string_pretty(index)?;
+    fs::write(&path, content)?;
+    
+    tracing::info!("Central index saved to: {}", path.display());
+    Ok(())
+}
+
+/// Load disk index for a specific disk.
+pub fn load_disk_index(disk_label: &str) -> Result<Option<DiskIndex>> {
+    let path = disk_indexes_dir()?.join(format!("{}.json", disk_label));
+    if path.exists() {
+        let content = fs::read_to_string(&path)?;
+        let index: DiskIndex = serde_json::from_str(&content)?;
+        Ok(Some(index))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Save disk index to disk.
+pub fn save_disk_index(index: &DiskIndex) -> Result<()> {
+    let dir = disk_indexes_dir()?;
+    fs::create_dir_all(&dir)?;
+    
+    let path = dir.join(format!("{}.json", index.disk.label));
+    let content = serde_json::to_string_pretty(index)?;
+    fs::write(&path, content)?;
+    
+    tracing::info!("Disk index saved to: {}", path.display());
+    Ok(())
+}
+
+/// Detect disk label from mount path.
+/// 
+/// For paths like `/run/media/johnny/JMedia_M05/Movies`, returns "JMedia_M05".
+pub fn detect_disk_label(path: &Path) -> Option<String> {
+    let path_str = path.to_string_lossy();
+    
+    // Pattern: /run/media/<user>/<label>/...
+    if path_str.starts_with("/run/media/") {
+        let parts: Vec<&str> = path_str.split('/').collect();
+        if parts.len() >= 5 {
+            return Some(parts[4].to_string());
+        }
+    }
+    
+    // Pattern: /media/<user>/<label>/...
+    if path_str.starts_with("/media/") {
+        let parts: Vec<&str> = path_str.split('/').collect();
+        if parts.len() >= 4 {
+            return Some(parts[3].to_string());
+        }
+    }
+    
+    // Pattern: /mnt/<label>/...
+    if path_str.starts_with("/mnt/") {
+        let parts: Vec<&str> = path_str.split('/').collect();
+        if parts.len() >= 3 {
+            return Some(parts[2].to_string());
+        }
+    }
+    
+    // Fallback: use directory name
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+}
+
+/// Get disk UUID using lsblk command.
+pub fn get_disk_uuid(path: &Path) -> Option<String> {
+    // Try to get UUID using df and blkid
+    let output = std::process::Command::new("df")
+        .arg(path)
+        .output()
+        .ok()?;
+    
+    let df_output = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = df_output.lines().collect();
+    if lines.len() < 2 {
+        return None;
+    }
+    
+    let device = lines[1].split_whitespace().next()?;
+    
+    let blkid_output = std::process::Command::new("blkid")
+        .arg("-s")
+        .arg("UUID")
+        .arg("-o")
+        .arg("value")
+        .arg(device)
+        .output()
+        .ok()?;
+    
+    let uuid = String::from_utf8_lossy(&blkid_output.stdout)
+        .trim()
+        .to_string();
+    
+    if uuid.is_empty() {
+        None
+    } else {
+        Some(uuid)
+    }
+}
+
+/// Check if a disk is currently mounted/online.
+pub fn is_disk_online(disk_label: &str) -> bool {
+    // Check common mount points
+    let paths = [
+        format!("/run/media/{}/{}", whoami::username(), disk_label),
+        format!("/media/{}/{}", whoami::username(), disk_label),
+        format!("/mnt/{}", disk_label),
+    ];
+    
+    for path in &paths {
+        if Path::new(path).exists() {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Scan a directory for NFO files and build index entries.
+pub fn scan_directory(
+    path: &Path,
+    disk_label: &str,
+    disk_uuid: Option<String>,
+    media_type: &str,
+) -> Result<DiskIndex> {
+    tracing::info!("Scanning directory: {}", path.display());
+    
+    let mut index = DiskIndex::default();
+    index.disk.label = disk_label.to_string();
+    index.disk.uuid = disk_uuid;
+    index.disk.base_path = path.to_string_lossy().to_string();
+    index.disk.last_indexed = chrono::Utc::now().to_rfc3339();
+    
+    let nfo_pattern = if media_type == "movies" {
+        "movie.nfo"
+    } else {
+        "tvshow.nfo"
+    };
+    
+    let mut total_size: u64 = 0;
+    
+    for entry in WalkDir::new(path)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let entry_path = entry.path();
+        
+        if entry_path.is_file() {
+            if let Some(filename) = entry_path.file_name() {
+                if filename == nfo_pattern {
+                    match parse_nfo_file(entry_path, disk_label, &index.disk.uuid, path) {
+                        Ok(ParsedNfo::Movie(movie)) => {
+                            total_size += movie.size_bytes;
+                            index.movies.push(movie);
+                        }
+                        Ok(ParsedNfo::TvShow(tvshow)) => {
+                            total_size += tvshow.size_bytes;
+                            index.tvshows.push(tvshow);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse NFO {}: {}", entry_path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    index.disk.movie_count = index.movies.len();
+    index.disk.tvshow_count = index.tvshows.len();
+    index.disk.total_size_bytes = total_size;
+    
+    tracing::info!(
+        "Scan complete: {} movies, {} TV shows",
+        index.movies.len(),
+        index.tvshows.len()
+    );
+    
+    Ok(index)
+}
+
+/// Parsed NFO result.
+enum ParsedNfo {
+    Movie(MovieEntry),
+    TvShow(TvShowEntry),
+}
+
+/// Parse a movie.nfo or tvshow.nfo file.
+fn parse_nfo_file(
+    nfo_path: &Path,
+    disk_label: &str,
+    disk_uuid: &Option<String>,
+    base_path: &Path,
+) -> Result<ParsedNfo> {
+    let content = fs::read_to_string(nfo_path)?;
+    let nfo_dir = nfo_path.parent().context("NFO has no parent directory")?;
+    
+    // Calculate relative path
+    let relative_path = nfo_dir
+        .strip_prefix(base_path)
+        .unwrap_or(nfo_dir)
+        .to_string_lossy()
+        .to_string();
+    
+    // Calculate total size of video files in directory
+    let size_bytes = calculate_directory_video_size(nfo_dir);
+    
+    // Determine if movie or tvshow based on root element
+    if content.contains("<movie>") {
+        let movie = parse_movie_nfo(&content, disk_label, disk_uuid, &relative_path, size_bytes)?;
+        Ok(ParsedNfo::Movie(movie))
+    } else if content.contains("<tvshow>") {
+        let tvshow = parse_tvshow_nfo(&content, disk_label, disk_uuid, &relative_path, size_bytes)?;
+        Ok(ParsedNfo::TvShow(tvshow))
+    } else {
+        anyhow::bail!("Unknown NFO format");
+    }
+}
+
+/// Parse movie NFO content.
+fn parse_movie_nfo(
+    content: &str,
+    disk_label: &str,
+    disk_uuid: &Option<String>,
+    relative_path: &str,
+    size_bytes: u64,
+) -> Result<MovieEntry> {
+    // Simple XML parsing using regex (for robustness with malformed XML)
+    let get_tag = |tag: &str| -> Option<String> {
+        let pattern = format!(r"<{}>(.*?)</{}>", tag, tag);
+        regex::Regex::new(&pattern)
+            .ok()?
+            .captures(content)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+    };
+    
+    let get_all_tags = |tag: &str| -> Vec<String> {
+        let pattern = format!(r"<{}>(.*?)</{}>", tag, tag);
+        regex::Regex::new(&pattern)
+            .map(|re| {
+                re.captures_iter(content)
+                    .filter_map(|c| c.get(1))
+                    .map(|m| m.as_str().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    
+    let title = get_tag("title").unwrap_or_else(|| "Unknown".to_string());
+    let original_title = get_tag("originaltitle");
+    let year = get_tag("year").and_then(|y| y.parse().ok());
+    
+    // TMDB ID from uniqueid or tmdbid tag
+    let tmdb_id = get_tag("tmdbid")
+        .or_else(|| {
+            // Try to find <uniqueid type="tmdb">
+            let pattern = r#"<uniqueid[^>]*type="tmdb"[^>]*>(\d+)</uniqueid>"#;
+            regex::Regex::new(pattern)
+                .ok()?
+                .captures(content)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+        })
+        .and_then(|id| id.parse().ok());
+    
+    // IMDB ID
+    let imdb_id = get_tag("imdbid").or_else(|| {
+        let pattern = r#"<uniqueid[^>]*type="imdb"[^>]*>(tt\d+)</uniqueid>"#;
+        regex::Regex::new(pattern)
+            .ok()?
+            .captures(content)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())
+    });
+    
+    // Collection info
+    let collection_id = get_tag("tmdbcollectionid").and_then(|id| id.parse().ok());
+    let collection_name = get_tag("set").or_else(|| {
+        // Try <set><name>...</name></set> format
+        let pattern = r"<set>\s*<name>(.*?)</name>";
+        regex::Regex::new(pattern)
+            .ok()?
+            .captures(content)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+    });
+    
+    // Country
+    let country = get_tag("country").map(|c| {
+        // Convert full country name to code if needed
+        country_name_to_code(&c)
+    });
+    
+    let genres = get_all_tags("genre");
+    let actors = get_all_tags("actor")
+        .into_iter()
+        .flat_map(|a| {
+            // Try to extract name from <actor><name>...</name></actor>
+            let pattern = r"<name>(.*?)</name>";
+            regex::Regex::new(pattern)
+                .ok()
+                .and_then(|re| re.captures(&a))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim().to_string())
+                .or(Some(a))
+        })
+        .collect();
+    
+    let directors = get_all_tags("director");
+    let runtime = get_tag("runtime").and_then(|r| r.parse().ok());
+    let rating = get_tag("rating").and_then(|r| r.parse().ok());
+    
+    // Resolution from video info or filename
+    let resolution = get_tag("resolution");
+    
+    Ok(MovieEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        disk: disk_label.to_string(),
+        disk_uuid: disk_uuid.clone(),
+        relative_path: relative_path.to_string(),
+        title,
+        original_title,
+        year,
+        tmdb_id,
+        imdb_id,
+        collection_id,
+        collection_name,
+        country,
+        genres,
+        actors,
+        directors,
+        runtime,
+        rating,
+        size_bytes,
+        resolution,
+        indexed_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Parse tvshow NFO content.
+fn parse_tvshow_nfo(
+    content: &str,
+    disk_label: &str,
+    disk_uuid: &Option<String>,
+    relative_path: &str,
+    size_bytes: u64,
+) -> Result<TvShowEntry> {
+    let get_tag = |tag: &str| -> Option<String> {
+        let pattern = format!(r"<{}>(.*?)</{}>", tag, tag);
+        regex::Regex::new(&pattern)
+            .ok()?
+            .captures(content)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+    };
+    
+    let get_all_tags = |tag: &str| -> Vec<String> {
+        let pattern = format!(r"<{}>(.*?)</{}>", tag, tag);
+        regex::Regex::new(&pattern)
+            .map(|re| {
+                re.captures_iter(content)
+                    .filter_map(|c| c.get(1))
+                    .map(|m| m.as_str().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    
+    let title = get_tag("title").unwrap_or_else(|| "Unknown".to_string());
+    let original_title = get_tag("originaltitle");
+    let year = get_tag("year")
+        .or_else(|| get_tag("premiered").map(|p| p[..4].to_string()))
+        .and_then(|y| y.parse().ok());
+    
+    let tmdb_id = get_tag("tmdbid")
+        .or_else(|| {
+            let pattern = r#"<uniqueid[^>]*type="tmdb"[^>]*>(\d+)</uniqueid>"#;
+            regex::Regex::new(pattern)
+                .ok()?
+                .captures(content)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+        })
+        .and_then(|id| id.parse().ok());
+    
+    let imdb_id = get_tag("imdbid").or_else(|| {
+        let pattern = r#"<uniqueid[^>]*type="imdb"[^>]*>(tt\d+)</uniqueid>"#;
+        regex::Regex::new(pattern)
+            .ok()?
+            .captures(content)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())
+    });
+    
+    let country = get_tag("country").map(|c| country_name_to_code(&c));
+    let genres = get_all_tags("genre");
+    
+    let actors: Vec<String> = get_all_tags("actor")
+        .into_iter()
+        .flat_map(|a| {
+            let pattern = r"<name>(.*?)</name>";
+            regex::Regex::new(pattern)
+                .ok()
+                .and_then(|re| re.captures(&a))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim().to_string())
+                .or(Some(a))
+        })
+        .collect();
+    
+    let seasons = get_tag("season").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let episodes = get_tag("episode").and_then(|e| e.parse().ok()).unwrap_or(0);
+    
+    Ok(TvShowEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        disk: disk_label.to_string(),
+        disk_uuid: disk_uuid.clone(),
+        relative_path: relative_path.to_string(),
+        title,
+        original_title,
+        year,
+        tmdb_id,
+        imdb_id,
+        country,
+        genres,
+        actors,
+        seasons,
+        episodes,
+        size_bytes,
+        indexed_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Calculate total size of video files in a directory (recursive).
+fn calculate_directory_video_size(dir: &Path) -> u64 {
+    let video_extensions = ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts"];
+    
+    WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| video_extensions.contains(&ext.to_lowercase().as_str()))
+                .unwrap_or(false)
+        })
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Convert country name to ISO 3166-1 alpha-2 code.
+fn country_name_to_code(name: &str) -> String {
+    let name_lower = name.to_lowercase();
+    match name_lower.as_str() {
+        "united states" | "usa" | "united states of america" => "US".to_string(),
+        "china" | "中国" => "CN".to_string(),
+        "united kingdom" | "uk" | "great britain" => "GB".to_string(),
+        "japan" | "日本" => "JP".to_string(),
+        "korea" | "south korea" | "韩国" => "KR".to_string(),
+        "france" | "法国" => "FR".to_string(),
+        "germany" | "德国" => "DE".to_string(),
+        "india" | "印度" => "IN".to_string(),
+        "italy" | "意大利" => "IT".to_string(),
+        "spain" | "西班牙" => "ES".to_string(),
+        "canada" | "加拿大" => "CA".to_string(),
+        "australia" | "澳大利亚" => "AU".to_string(),
+        "russia" | "俄罗斯" => "RU".to_string(),
+        "hong kong" | "香港" => "HK".to_string(),
+        "taiwan" | "台湾" => "TW".to_string(),
+        _ => {
+            // If already a code, return as-is
+            if name.len() == 2 && name.chars().all(|c| c.is_ascii_uppercase()) {
+                name.to_string()
+            } else {
+                name.to_string()
+            }
+        }
+    }
+}
+
+/// Merge disk index into central index.
+pub fn merge_disk_into_central(central: &mut CentralIndex, disk: DiskIndex) {
+    // Update or add disk info
+    central.disks.insert(disk.disk.label.clone(), disk.disk.clone());
+    
+    // Remove old entries for this disk
+    central.movies.retain(|m| m.disk != disk.disk.label);
+    central.tvshows.retain(|t| t.disk != disk.disk.label);
+    
+    // Add new entries
+    central.movies.extend(disk.movies);
+    central.tvshows.extend(disk.tvshows);
+    
+    // Rebuild indexes and update statistics
+    central.rebuild_indexes();
+    central.update_statistics();
+    central.updated_at = chrono::Utc::now().to_rfc3339();
+}
+
+/// Search results container.
+#[derive(Debug)]
+pub struct SearchResults {
+    pub movies: Vec<MovieEntry>,
+    pub tvshows: Vec<TvShowEntry>,
+    pub collections: Vec<CollectionInfo>,
+}
+
+/// Search the central index.
+pub fn search(
+    index: &CentralIndex,
+    title: Option<&str>,
+    actor: Option<&str>,
+    director: Option<&str>,
+    collection: Option<&str>,
+    year: Option<u16>,
+    year_range: Option<(u16, u16)>,
+    genre: Option<&str>,
+    country: Option<&str>,
+) -> SearchResults {
+    let mut movie_ids: Option<std::collections::HashSet<String>> = None;
+    let mut tvshow_ids: Option<std::collections::HashSet<String>> = None;
+    
+    // Helper to intersect sets
+    fn intersect(
+        existing: &mut Option<std::collections::HashSet<String>>,
+        new: std::collections::HashSet<String>,
+    ) {
+        match existing {
+            Some(set) => {
+                set.retain(|id| new.contains(id));
+            }
+            None => {
+                *existing = Some(new);
+            }
+        }
+    }
+    
+    // Search by actor
+    if let Some(actor_name) = actor {
+        let actor_lower = actor_name.to_lowercase();
+        let ids: std::collections::HashSet<String> = index
+            .indexes
+            .by_actor
+            .iter()
+            .filter(|(name, _)| name.to_lowercase().contains(&actor_lower))
+            .flat_map(|(_, ids)| ids.clone())
+            .collect();
+        intersect(&mut movie_ids, ids.clone());
+        intersect(&mut tvshow_ids, ids);
+    }
+    
+    // Search by director
+    if let Some(director_name) = director {
+        let director_lower = director_name.to_lowercase();
+        let ids: std::collections::HashSet<String> = index
+            .indexes
+            .by_director
+            .iter()
+            .filter(|(name, _)| name.to_lowercase().contains(&director_lower))
+            .flat_map(|(_, ids)| ids.clone())
+            .collect();
+        intersect(&mut movie_ids, ids);
+    }
+    
+    // Search by genre
+    if let Some(genre_name) = genre {
+        let genre_lower = genre_name.to_lowercase();
+        let ids: std::collections::HashSet<String> = index
+            .indexes
+            .by_genre
+            .iter()
+            .filter(|(name, _)| name.to_lowercase().contains(&genre_lower))
+            .flat_map(|(_, ids)| ids.clone())
+            .collect();
+        intersect(&mut movie_ids, ids.clone());
+        intersect(&mut tvshow_ids, ids);
+    }
+    
+    // Search by country
+    if let Some(country_code) = country {
+        let country_upper = country_code.to_uppercase();
+        if let Some(ids) = index.indexes.by_country.get(&country_upper) {
+            let id_set: std::collections::HashSet<String> = ids.iter().cloned().collect();
+            intersect(&mut movie_ids, id_set.clone());
+            intersect(&mut tvshow_ids, id_set);
+        } else {
+            movie_ids = Some(std::collections::HashSet::new());
+            tvshow_ids = Some(std::collections::HashSet::new());
+        }
+    }
+    
+    // Search by year or year range
+    if let Some(y) = year {
+        if let Some(ids) = index.indexes.by_year.get(&y) {
+            let id_set: std::collections::HashSet<String> = ids.iter().cloned().collect();
+            intersect(&mut movie_ids, id_set.clone());
+            intersect(&mut tvshow_ids, id_set);
+        } else {
+            movie_ids = Some(std::collections::HashSet::new());
+            tvshow_ids = Some(std::collections::HashSet::new());
+        }
+    } else if let Some((start, end)) = year_range {
+        let ids: std::collections::HashSet<String> = (start..=end)
+            .flat_map(|y| index.indexes.by_year.get(&y).cloned().unwrap_or_default())
+            .collect();
+        intersect(&mut movie_ids, ids.clone());
+        intersect(&mut tvshow_ids, ids);
+    }
+    
+    // Get movies
+    let mut movies: Vec<MovieEntry> = if let Some(ref ids) = movie_ids {
+        index
+            .movies
+            .iter()
+            .filter(|m| ids.contains(&m.id))
+            .cloned()
+            .collect()
+    } else {
+        index.movies.clone()
+    };
+    
+    // Get TV shows
+    let mut tvshows: Vec<TvShowEntry> = if let Some(ref ids) = tvshow_ids {
+        index
+            .tvshows
+            .iter()
+            .filter(|t| ids.contains(&t.id))
+            .cloned()
+            .collect()
+    } else {
+        index.tvshows.clone()
+    };
+    
+    // Filter by title
+    if let Some(title_query) = title {
+        let query_lower = title_query.to_lowercase();
+        movies.retain(|m| {
+            m.title.to_lowercase().contains(&query_lower)
+                || m.original_title
+                    .as_ref()
+                    .map(|t| t.to_lowercase().contains(&query_lower))
+                    .unwrap_or(false)
+        });
+        tvshows.retain(|t| {
+            t.title.to_lowercase().contains(&query_lower)
+                || t.original_title
+                    .as_ref()
+                    .map(|title| title.to_lowercase().contains(&query_lower))
+                    .unwrap_or(false)
+        });
+    }
+    
+    // Sort by year descending
+    movies.sort_by(|a, b| b.year.cmp(&a.year));
+    tvshows.sort_by(|a, b| b.year.cmp(&a.year));
+    
+    // Search collections
+    let collections: Vec<CollectionInfo> = if let Some(collection_query) = collection {
+        let query_lower = collection_query.to_lowercase();
+        index
+            .collections
+            .values()
+            .filter(|c| c.name.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    
+    SearchResults {
+        movies,
+        tvshows,
+        collections,
+    }
+}
+

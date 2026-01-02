@@ -114,6 +114,12 @@ pub struct MovieMetadata {
     pub actor_roles: Vec<String>,
     /// Certification/rating (e.g., "PG-13").
     pub certification: Option<String>,
+    /// Collection/Set ID (for movie series like "Pirates of the Caribbean").
+    pub collection_id: Option<u64>,
+    /// Collection/Set name.
+    pub collection_name: Option<String>,
+    /// Collection/Set overview.
+    pub collection_overview: Option<String>,
 }
 
 /// TMDB metadata for a TV show.

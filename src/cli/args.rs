@@ -62,6 +62,163 @@ pub enum Commands {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
+
+    /// Build or update the central media index
+    Index {
+        #[command(subcommand)]
+        action: IndexAction,
+    },
+
+    /// Search the media collection
+    Search {
+        /// Search by title
+        #[arg(short = 't', long)]
+        title: Option<String>,
+
+        /// Search by actor name
+        #[arg(short = 'a', long)]
+        actor: Option<String>,
+
+        /// Search by director name
+        #[arg(short = 'd', long)]
+        director: Option<String>,
+
+        /// Search by collection/series name
+        #[arg(short = 'c', long)]
+        collection: Option<String>,
+
+        /// Search by year (e.g., 2024 or 2020-2024)
+        #[arg(short = 'y', long)]
+        year: Option<String>,
+
+        /// Search by genre
+        #[arg(short = 'g', long)]
+        genre: Option<String>,
+
+        /// Search by country code (e.g., US, CN, KR)
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Show disk online/offline status
+        #[arg(long)]
+        show_status: bool,
+
+        /// Output format: table, simple, json
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+
+    /// Export configuration and indexes
+    Export {
+        /// Output file path (default: auto-generated with timestamp)
+        #[arg(value_name = "OUTPUT")]
+        output: Option<PathBuf>,
+
+        /// Include sensitive data (API keys)
+        #[arg(long)]
+        include_secrets: bool,
+
+        /// Only export specific type: indexes, config, sessions
+        #[arg(long)]
+        only: Option<String>,
+
+        /// Exclude specific type: indexes, config, sessions
+        #[arg(long)]
+        exclude: Option<Vec<String>>,
+
+        /// Only export specific disk's index
+        #[arg(long)]
+        disk: Option<String>,
+
+        /// Description for the backup
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Auto-generate filename with timestamp
+        #[arg(long)]
+        auto_name: bool,
+    },
+
+    /// Import configuration and indexes from backup
+    Import {
+        /// Backup file path
+        #[arg(value_name = "BACKUP_FILE")]
+        backup_file: PathBuf,
+
+        /// Dry run - preview without importing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Only import specific type: indexes, config, sessions
+        #[arg(long)]
+        only: Option<String>,
+
+        /// Merge with existing data (don't overwrite)
+        #[arg(long)]
+        merge: bool,
+
+        /// Force overwrite without confirmation
+        #[arg(long)]
+        force: bool,
+
+        /// Backup existing config before import
+        #[arg(long)]
+        backup_first: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IndexAction {
+    /// Scan and index a directory
+    Scan {
+        /// Directory to scan
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Media type: movies or tvshows
+        #[arg(long, default_value = "movies")]
+        media_type: String,
+
+        /// Custom disk label (auto-detected if not provided)
+        #[arg(long)]
+        disk_label: Option<String>,
+
+        /// Force re-index (replace existing entries)
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Show collection statistics
+    Stats,
+
+    /// List contents of a specific disk
+    List {
+        /// Disk label to list
+        #[arg(value_name = "DISK_LABEL")]
+        disk_label: String,
+
+        /// Media type filter: movies, tvshows, or all
+        #[arg(long, default_value = "all")]
+        media_type: String,
+    },
+
+    /// Verify index against actual files
+    Verify {
+        /// Path to verify
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+
+    /// Remove a disk from the index
+    Remove {
+        /// Disk label to remove
+        #[arg(value_name = "DISK_LABEL")]
+        disk_label: String,
+
+        /// Confirm removal
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

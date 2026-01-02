@@ -169,7 +169,7 @@ impl FilenameParser {
         let prompt = self.generate_prompt(filename, media_type);
 
         tracing::debug!("Parsing filename: {}", filename);
-        println!("    [AI] Parsing: {} (CPU inference may take 1-3 min)...", filename);
+        println!("    [AI] Parsing: {}...", filename);
 
         let start = std::time::Instant::now();
         
@@ -569,6 +569,198 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
         Some(num)
     } else {
         None
+    }
+}
+
+/// Check if a filename matches the organized output format.
+/// 
+/// Organized formats:
+/// - TV: `[Title]-S01E01-[Episode Name]-1080p-...`
+/// - Movie: `[EnglishTitle][ChineseTitle](Year)-tt12345-tmdb67890-1080p-...`
+pub fn is_organized_filename(filename: &str) -> bool {
+    // TV show pattern: [Title]-S01E01-[...]
+    let tv_pattern = regex::Regex::new(r"^\[.+\]-S\d{2}E\d{2,3}-\[.+\]-").ok();
+    if let Some(re) = tv_pattern {
+        if re.is_match(filename) {
+            return true;
+        }
+    }
+    
+    // Movie pattern: [Title](Year)-tt...-tmdb...-
+    // or [Title][Title](Year)-tt...-tmdb...-
+    let movie_pattern = regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-(?:tt\d+)?-?tmdb\d+-").ok();
+    if let Some(re) = movie_pattern {
+        if re.is_match(filename) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Parse an organized TV show filename to extract metadata.
+/// 
+/// Format: `[Title]-S01E01-[Episode Name]-1080p-WEB-DL-...`
+/// Returns: (title, season, episode, episode_name)
+pub fn parse_organized_tvshow_filename(filename: &str) -> Option<OrganizedTvShowInfo> {
+    let re = regex::Regex::new(
+        r"^\[([^\]]+)\]-S(\d{2})E(\d{2,3})-\[([^\]]+)\]-"
+    ).ok()?;
+    
+    let caps = re.captures(filename)?;
+    
+    Some(OrganizedTvShowInfo {
+        title: caps.get(1)?.as_str().to_string(),
+        season: caps.get(2)?.as_str().parse().ok()?,
+        episode: caps.get(3)?.as_str().parse().ok()?,
+        episode_name: caps.get(4)?.as_str().to_string(),
+    })
+}
+
+/// Parse an organized movie filename to extract metadata.
+/// 
+/// Format: `[EnglishTitle][ChineseTitle](Year)-tt12345-tmdb67890-1080p-...`
+/// or: `[Title](Year)-tt12345-tmdb67890-1080p-...`
+/// Returns: (original_title, title, year, imdb_id, tmdb_id)
+pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieInfo> {
+    // Try two-title format first: [English][Chinese](Year)
+    let re_two = regex::Regex::new(
+        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
+    ).ok()?;
+    
+    if let Some(caps) = re_two.captures(filename) {
+        return Some(OrganizedMovieInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: Some(caps.get(2)?.as_str().to_string()),
+            year: caps.get(3)?.as_str().parse().ok()?,
+            imdb_id: caps.get(4).map(|m| format!("tt{}", m.as_str())),
+            tmdb_id: caps.get(5)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Single-title format: [Title](Year)
+    let re_one = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
+    ).ok()?;
+    
+    if let Some(caps) = re_one.captures(filename) {
+        return Some(OrganizedMovieInfo {
+            original_title: Some(caps.get(1)?.as_str().to_string()),
+            title: None,
+            year: caps.get(2)?.as_str().parse().ok()?,
+            imdb_id: caps.get(3).map(|m| format!("tt{}", m.as_str())),
+            tmdb_id: caps.get(4)?.as_str().parse().ok()?,
+        });
+    }
+    
+    None
+}
+
+/// Information extracted from an organized TV show filename.
+#[derive(Debug, Clone)]
+pub struct OrganizedTvShowInfo {
+    pub title: String,
+    pub season: u16,
+    pub episode: u16,
+    pub episode_name: String,
+}
+
+/// Information extracted from an organized movie filename.
+#[derive(Debug, Clone)]
+pub struct OrganizedMovieInfo {
+    pub original_title: Option<String>,
+    pub title: Option<String>,
+    pub year: u16,
+    pub imdb_id: Option<String>,
+    pub tmdb_id: u64,
+}
+
+/// Information extracted from an organized TV show folder name.
+#[derive(Debug, Clone)]
+pub struct OrganizedTvShowFolderInfo {
+    pub title: String,
+    pub year: Option<u16>,
+    pub imdb_id: Option<String>,
+    pub tmdb_id: u64,
+}
+
+/// Check if a folder name matches the organized TV show folder format.
+/// 
+/// Format: `[Title](Year)-ttIMDB-tmdbID` or `[Title](Year)-tmdbID`
+pub fn is_organized_tvshow_folder(dirname: &str) -> bool {
+    // Pattern: [Title](Year)-tt...-tmdb... or [Title](Year)-tmdb...
+    let re = regex::Regex::new(r"^\[.+\]\(\d{4}\)-(?:tt\d+)?-?tmdb\d+$").ok();
+    if let Some(re) = re {
+        if re.is_match(dirname) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse an organized TV show folder name to extract metadata.
+/// 
+/// Format: `[Title](Year)-ttIMDB-tmdbID` or `[Title](Year)-tmdbID`
+/// Example: `[罚罪2](2025)-tt36771056-tmdb296146`
+pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFolderInfo> {
+    // Pattern with IMDB: [Title](Year)-ttIMDB-tmdbID
+    let re_with_imdb = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_with_imdb.captures(dirname) {
+        return Some(OrganizedTvShowFolderInfo {
+            title: caps.get(1)?.as_str().to_string(),
+            year: caps.get(2)?.as_str().parse().ok(),
+            imdb_id: Some(format!("tt{}", caps.get(3)?.as_str())),
+            tmdb_id: caps.get(4)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // Pattern without IMDB: [Title](Year)-tmdbID
+    let re_no_imdb = regex::Regex::new(
+        r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
+    ).ok()?;
+    
+    if let Some(caps) = re_no_imdb.captures(dirname) {
+        return Some(OrganizedTvShowFolderInfo {
+            title: caps.get(1)?.as_str().to_string(),
+            year: caps.get(2)?.as_str().parse().ok(),
+            imdb_id: None,
+            tmdb_id: caps.get(3)?.as_str().parse().ok()?,
+        });
+    }
+    
+    None
+}
+
+/// Convert OrganizedTvShowInfo to ParsedFilename for consistent processing.
+impl From<OrganizedTvShowInfo> for ParsedFilename {
+    fn from(info: OrganizedTvShowInfo) -> Self {
+        ParsedFilename {
+            original_title: None,
+            title: Some(info.title),
+            year: None,
+            season: Some(info.season),
+            episode: Some(info.episode),
+            confidence: 1.0, // High confidence since we parsed our own format
+            raw_response: None,
+        }
+    }
+}
+
+/// Convert OrganizedMovieInfo to ParsedFilename for consistent processing.
+impl From<OrganizedMovieInfo> for ParsedFilename {
+    fn from(info: OrganizedMovieInfo) -> Self {
+        ParsedFilename {
+            original_title: info.original_title,
+            title: info.title,
+            year: Some(info.year),
+            season: None,
+            episode: None,
+            confidence: 1.0, // High confidence since we parsed our own format
+            raw_response: None,
+        }
     }
 }
 
