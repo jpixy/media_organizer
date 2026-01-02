@@ -383,18 +383,67 @@ impl Executor {
     /// since rename is atomic and doesn't copy data. Only verify for cross-filesystem
     /// moves which require actual data copy.
     /// 
-    /// Supports resume after interruption: if source doesn't exist but target does,
-    /// assume this operation was already completed and skip it.
+    /// Supports resume after interruption with proper state detection:
+    /// - (from=no, to=yes): Already completed → skip
+    /// - (from=yes, to=yes): Interrupted cross-fs copy → verify and complete
+    /// - (from=no, to=no): Source lost → error
+    /// - (from=yes, to=no): Normal case → proceed
     fn execute_move(&self, op: &Operation) -> Result<Option<RollbackOperation>> {
         let from = op.from.as_ref().ok_or_else(|| {
             crate::Error::ExecuteError("Move operation missing 'from' path".to_string())
         })?;
         let to = &op.to;
 
-        // Check for already-completed operation (resume after interruption)
-        if !from.exists() && to.exists() {
-            tracing::debug!("Move already completed, skipping: {:?} -> {:?}", from, to);
-            return Ok(None);
+        let from_exists = from.exists();
+        let to_exists = to.exists();
+
+        // State machine for move operation
+        match (from_exists, to_exists) {
+            (false, true) => {
+                // Already completed (source moved to target)
+                tracing::debug!("Move already completed, skipping: {:?} -> {:?}", from, to);
+                return Ok(None);
+            }
+            (true, true) => {
+                // Both exist: likely interrupted cross-filesystem copy
+                // Compare file sizes to determine if copy was complete
+                let from_size = fs::metadata(from).map(|m| m.len()).unwrap_or(0);
+                let to_size = fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+                
+                if from_size == to_size {
+                    // Sizes match - copy was complete, just need to delete source
+                    tracing::info!("Resuming interrupted move (deleting source): {:?}", from);
+                    fs::remove_file(from)?;
+                    return Ok(Some(RollbackOperation {
+                        seq: 0,
+                        op_type: RollbackOpType::Move,
+                        from: from.clone(),
+                        to: to.clone(),
+                        checksum: None,
+                        rollback: RollbackAction {
+                            op: RollbackActionType::Move,
+                            path: to.clone(),
+                            to: Some(from.clone()),
+                        },
+                        executed: false,
+                    }));
+                } else {
+                    // Sizes don't match - incomplete copy, remove and retry
+                    tracing::warn!("Incomplete copy detected, removing and retrying: {:?}", to);
+                    fs::remove_file(to)?;
+                    // Fall through to normal processing
+                }
+            }
+            (false, false) => {
+                // Source lost and target doesn't exist
+                return Err(crate::Error::ExecuteError(
+                    format!("Source file not found: {:?}", from)
+                ));
+            }
+            (true, false) => {
+                // Normal case: source exists, target doesn't
+                // Fall through to normal processing
+            }
         }
 
         // Create parent directory if needed
