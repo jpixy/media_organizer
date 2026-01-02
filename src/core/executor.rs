@@ -273,26 +273,41 @@ impl Executor {
     }
 
     /// Validate a plan before execution.
+    /// 
+    /// Supports resuming interrupted executions:
+    /// - If source missing but target exists → already completed, will skip
+    /// - If source missing and target missing → real error
     pub fn validate(&self, plan: &Plan) -> Result<()> {
         println!("[INFO] Validating plan...");
 
         let mut errors = Vec::new();
+        let mut already_done = 0;
 
         for item in &plan.items {
             if item.status != PlanItemStatus::Pending {
                 continue;
             }
 
+            let source_exists = item.source.path.exists();
+            let target_exists = item.target.full_path.exists();
+
+            // Check if this item was already processed (interrupted execution)
+            if !source_exists && target_exists {
+                // Source moved to target - already completed, will be skipped
+                already_done += 1;
+                continue;
+            }
+
             // Check if source file exists
-            if !item.source.path.exists() {
+            if !source_exists {
                 errors.push(format!(
                     "Source file not found: {}",
                     item.source.path.display()
                 ));
             }
 
-            // Check for target conflicts
-            if item.target.full_path.exists() {
+            // Check for target conflicts (source exists but target also exists)
+            if source_exists && target_exists {
                 if !self.config.backup_on_overwrite {
                     errors.push(format!(
                         "Target file already exists: {}",
@@ -300,6 +315,10 @@ impl Executor {
                     ));
                 }
             }
+        }
+
+        if already_done > 0 {
+            println!("[INFO] {} items already completed (will be skipped)", already_done);
         }
 
         if !errors.is_empty() {
@@ -363,11 +382,20 @@ impl Executor {
     /// Optimization: For same-filesystem moves (rename), skip checksum verification
     /// since rename is atomic and doesn't copy data. Only verify for cross-filesystem
     /// moves which require actual data copy.
+    /// 
+    /// Supports resume after interruption: if source doesn't exist but target does,
+    /// assume this operation was already completed and skip it.
     fn execute_move(&self, op: &Operation) -> Result<Option<RollbackOperation>> {
         let from = op.from.as_ref().ok_or_else(|| {
             crate::Error::ExecuteError("Move operation missing 'from' path".to_string())
         })?;
         let to = &op.to;
+
+        // Check for already-completed operation (resume after interruption)
+        if !from.exists() && to.exists() {
+            tracing::debug!("Move already completed, skipping: {:?} -> {:?}", from, to);
+            return Ok(None);
+        }
 
         // Create parent directory if needed
         if let Some(parent) = to.parent() {
