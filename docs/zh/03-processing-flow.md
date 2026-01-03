@@ -429,3 +429,40 @@ Movies_organized/CN_China/[Avatar](2009)-tt0499549-tmdb19995/
   └── [Avatar](2009)-1080p-WEB-DL.mp4  <- 从父文件夹获取 tmdb19995
 ```
 
+### 10.5 父目录 ID 回退查找 (已实现)
+
+当季度目录的 IMDB ID 无法被 TMDB 识别时（如季度特定的 ID），系统会自动向上查找父目录获取剧集的主 ID：
+
+```
+L_流人.Slow Horses.tt5875444/          <- 主剧集 IMDB ID
+  ├── S02.tt13660696/                  <- 季度 ID (TMDB 不认识)
+  │     └── episode.mp4                <- 自动使用 tt5875444
+  └── S03.tt20778346/
+        └── episode.mp4                <- 自动使用 tt5875444
+```
+
+**实现**：
+- `try_parent_directory_id_lookup()` 在 `planner.rs` 中
+- `extract_ids_from_path_starting_at()` 在 `metadata.rs` 中
+
+### 10.6 CJK 父目录上下文 (已实现)
+
+当父目录包含 CJK 字符（中文/日文/韩文）但文件名使用罗马字/拉丁字符时，父目录名会被添加到 AI 解析上下文：
+
+```
+逃避虽可耻但有用/                           <- 父目录有 CJK 标题
+  └── NIGEHAJI.E01.720p.FIX字幕侠/         <- 单集文件夹 (跳过)
+        └── [V2]NIGEHAJI.E01.720p.mkv      <- 罗马字文件名
+
+AI 输入变为: "逃避虽可耻但有用 - [V2]NIGEHAJI.E01.720p.mkv"
+```
+
+这解决了以下情况：
+- **NIGEHAJI** (逃げ恥) - 日语罗马字缩写
+- 其他文件名使用罗马字但目录使用正确 CJK 标题的情况
+
+**检测逻辑**：
+1. 检查父目录是否包含 CJK 字符
+2. 检查文件名是否主要是拉丁字符
+3. 如果两个条件都满足，将父目录名加入 AI 上下文
+

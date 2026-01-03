@@ -326,6 +326,45 @@ Movies_organized/CN_China/[Avatar](2009)-tt0499549-tmdb19995/
   |-- [Avatar](2009)-1080p-WEB-DL.mp4  <- Gets tmdb19995 from parent
 ```
 
+### 9.5 Parent Directory ID Fallback for TV Shows
+
+When a season directory's IMDB ID is not recognized by TMDB (e.g., season-specific IDs), 
+the system automatically searches parent directories for the show's main ID:
+
+```
+L_Slow Horses.tt5875444/           <- Main show IMDB ID
+  |-- S02.tt13660696/              <- Season-specific ID (not recognized by TMDB)
+  |     |-- episode.mp4            <- Will use tt5875444 from parent
+  |-- S03.tt20778346/
+        |-- episode.mp4            <- Will use tt5875444 from parent
+```
+
+**Implementation**:
+- `try_parent_directory_id_lookup()` in `planner.rs`
+- `extract_ids_from_path_starting_at()` in `metadata.rs`
+
+### 9.6 CJK Parent Directory Context
+
+When parent directory contains CJK characters (Chinese/Japanese/Korean) but filename 
+uses romanized/Latin characters, the parent dir name is added to AI parsing context:
+
+```
+逃避虽可耻但有用/                           <- Parent has CJK title
+  |-- NIGEHAJI.E01.720p.FIX字幕侠/         <- Per-episode folder (skipped)
+        |-- [V2]NIGEHAJI.E01.720p.mkv      <- Romanized filename
+
+AI input becomes: "逃避虽可耻但有用 - [V2]NIGEHAJI.E01.720p.mkv"
+```
+
+This fixes cases like:
+- **NIGEHAJI** (逃げ恥) - Japanese romanized abbreviation
+- Other shows using romanized names in filenames but proper CJK titles in directories
+
+**Detection logic**:
+1. Check if parent directory contains CJK characters
+2. Check if filename has few CJK chars but many Latin chars
+3. If both conditions met, include parent dir name in AI context
+
 ---
 
 ## 10. Implementation Status
