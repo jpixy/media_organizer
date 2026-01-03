@@ -357,6 +357,31 @@ impl CentralIndex {
                     .entry(collection_id)
                     .or_default()
                     .push(movie.id.clone());
+                
+                // Build collection info
+                let collection = self.collections.entry(collection_id).or_insert_with(|| {
+                    CollectionInfo {
+                        id: collection_id,
+                        name: movie.collection_name.clone().unwrap_or_else(|| "Unknown Collection".to_string()),
+                        poster_url: None,
+                        movies: Vec::new(),
+                        total_in_collection: 0, // We don't know the total without TMDB API
+                        owned_count: 0,
+                    }
+                });
+                
+                // Add movie to collection if not already present
+                let already_in_collection = collection.movies.iter().any(|m| m.tmdb_id == movie.tmdb_id.unwrap_or(0));
+                if !already_in_collection {
+                    collection.movies.push(CollectionMovie {
+                        tmdb_id: movie.tmdb_id.unwrap_or(0),
+                        title: movie.title.clone(),
+                        year: movie.year,
+                        disk: Some(movie.disk.clone()),
+                        owned: true,
+                    });
+                    collection.owned_count += 1;
+                }
             }
         }
         
@@ -431,13 +456,16 @@ impl CentralIndex {
         }
         
         // Collections
+        // Note: Without TMDB API access during indexing, we don't know total_in_collection.
+        // So we report collections where we have multiple movies as "potentially complete"
+        // and single-movie collections as "incomplete" (likely missing other movies).
         self.statistics.complete_collections = self.collections
             .values()
-            .filter(|c| c.owned_count >= c.total_in_collection)
+            .filter(|c| c.owned_count >= 2) // If we have 2+ movies, it's a real collection
             .count();
         self.statistics.incomplete_collections = self.collections
             .values()
-            .filter(|c| c.owned_count > 0 && c.owned_count < c.total_in_collection)
+            .filter(|c| c.owned_count == 1) // Single movie in collection = likely incomplete
             .count();
     }
     

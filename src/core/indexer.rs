@@ -337,14 +337,18 @@ fn parse_movie_nfo(
     
     // Collection info
     let collection_id = get_tag("tmdbcollectionid").and_then(|id| id.parse().ok());
-    let collection_name = get_tag("set").or_else(|| {
-        // Try <set><name>...</name></set> format
-        let pattern = r"<set>\s*<name>(.*?)</name>";
+    // First try <set><name>...</name></set> format (nested structure)
+    let collection_name = {
+        let pattern = r"(?s)<set>\s*<name>(.*?)</name>";
         regex::Regex::new(pattern)
-            .ok()?
-            .captures(content)
+            .ok()
+            .and_then(|re| re.captures(content))
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().trim().to_string())
+            .filter(|s| !s.is_empty())
+    }.or_else(|| {
+        // Fallback: simple <set>name</set> format (flat structure)
+        get_tag("set").filter(|s| !s.contains('<') && !s.is_empty())
     });
     
     // Country
