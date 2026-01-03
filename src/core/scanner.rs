@@ -212,6 +212,18 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
             // Check if it's a video file
             if let Some(ext) = entry_path.extension() {
                 if is_video_extension(&ext.to_string_lossy()) {
+                    // Get filename for sample check
+                    let filename = entry_path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    
+                    // Skip sample files - they will be moved as-is with the movie
+                    // (handled separately in add_subtitle_operations)
+                    if is_sample_filename(filename) {
+                        tracing::debug!("Sample file (will be moved with movie): {}", entry_path.display());
+                        continue;
+                    }
+                    
                     match create_video_file(entry_path) {
                         Ok(video_file) => {
                             // Mark parent directory as having files
@@ -219,12 +231,8 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
                                 dirs_with_files.insert(parent.to_path_buf());
                             }
 
-                            // Categorize as sample or regular video
-                            if video_file.is_sample {
-                                result.samples.push(video_file);
-                            } else {
-                                result.videos.push(video_file);
-                            }
+                            // Regular video
+                            result.videos.push(video_file);
                         }
                         Err(e) => {
                             tracing::warn!("Failed to read video file {:?}: {}", entry_path, e);

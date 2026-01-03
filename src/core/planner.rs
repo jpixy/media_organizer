@@ -3643,16 +3643,38 @@ impl Planner {
                     });
                 }
             }
-            // Check for subtitle files
+            // Check for subtitle files and sample video files
             else if path.is_file() {
                 let ext = path.extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_lowercase())
                     .unwrap_or_default();
                 
+                // Check for subtitle files
                 if SUBTITLE_EXTENSIONS.iter().any(|&e| ext == e) {
                     let target_path = target_folder.join(name);
                     tracing::debug!("Adding subtitle file move: {} -> {}", 
+                        path.display(), target_path.display());
+                    
+                    operations.push(Operation {
+                        op: OperationType::Move,
+                        from: Some(path),
+                        to: target_path,
+                        url: None,
+                        content_ref: None,
+                    });
+                    continue;
+                }
+                
+                // Check for sample video files (files with "sample" in filename)
+                // These are preview clips that should be moved with the movie
+                let is_video = ["mkv", "mp4", "avi", "mov", "wmv", "m4v", "ts", "m2ts", "flv", "webm"]
+                    .iter().any(|&e| ext == e);
+                let is_sample = name_lower.contains("sample") && !name_lower.contains("sampler");
+                
+                if is_video && is_sample {
+                    let target_path = target_folder.join(name);
+                    tracing::debug!("Adding sample video file move: {} -> {}", 
                         path.display(), target_path.display());
                     
                     operations.push(Operation {
