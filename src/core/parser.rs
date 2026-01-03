@@ -483,6 +483,7 @@ mod tests {
 /// - "E01.mp4", "E05.mkv"
 /// - "第01集.mp4", "第5集.mkv"
 /// - "01 4K.mp4" (episode with quality suffix)
+/// - "S02.Special.White.Christmas.mkv" (special episode -> Season 0)
 pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16>) {
     // Remove extension
     let name = filename
@@ -495,6 +496,12 @@ pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16
         .join(".");
     
     let name_lower = name.to_lowercase();
+    
+    // Pattern 0: S02.Special or SxxSpecial - treat as Season 0 (specials)
+    // Must check BEFORE regular SxxExx pattern
+    if let Some(caps) = regex_match_special(&name_lower) {
+        return caps;
+    }
     
     // Pattern 1: S01E01, s01e05
     if let Some(caps) = regex_match_sxxexx(&name_lower) {
@@ -523,6 +530,41 @@ pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16
     }
     
     (None, None)
+}
+
+/// Match S02.Special, S02Special, etc. - returns Season 0
+fn regex_match_special(s: &str) -> Option<(Option<u16>, Option<u16>)> {
+    // Match patterns like "s02.special", "s02special", "s2.special"
+    // Specials are placed in Season 0
+    let re = regex::Regex::new(r"s(\d{1,2})[\.\s_-]?special").ok()?;
+    if re.is_match(s) {
+        // Found a special - return Season 0, Episode 1 (or we could try to extract a number)
+        // Try to find a specific special number if present (e.g., "special.01")
+        let ep_re = regex::Regex::new(r"special[\.\s_-]?(\d{1,2})").ok();
+        let episode = ep_re
+            .and_then(|re| re.captures(s))
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(1);
+        
+        return Some((Some(0), Some(episode))); // Season 0 for specials
+    }
+    
+    // Also match standalone "special" or "special.01"
+    if s.contains("special") && !s.contains("e0") && !s.contains("e1") {
+        let re = regex::Regex::new(r"(?:^|[\.\s_-])special[\.\s_-]?(\d{0,2})").ok()?;
+        if let Some(caps) = re.captures(s) {
+            let episode = caps.get(1)
+                .and_then(|m| {
+                    let ep_str = m.as_str();
+                    if ep_str.is_empty() { None } else { ep_str.parse().ok() }
+                })
+                .unwrap_or(1);
+            return Some((Some(0), Some(episode)));
+        }
+    }
+    
+    None
 }
 
 fn regex_match_sxxexx(s: &str) -> Option<(Option<u16>, Option<u16>)> {
