@@ -62,6 +62,7 @@ fn is_video_extension(ext: &str) -> bool {
 /// - "Making of", "MakingOf"
 /// - "Bonus", "Bonuses"
 /// - "Special Features"
+/// - "Sample", "Samples" (video samples/previews)
 /// - Directory names ending with "-Extras" or ".Extras" (e.g., "The.Bourne.Identity.Extras-Grym")
 fn is_in_extras_directory(path: &Path) -> bool {
     // Check each component of the path
@@ -78,6 +79,7 @@ fn is_in_extras_directory(path: &Path) -> bool {
                 "making of", "makingof",
                 "bonus", "bonuses",
                 "special features", "specialfeatures",
+                "sample", "samples",
             ];
             
             if extras_names.iter().any(|&n| name_str == n) {
@@ -95,6 +97,12 @@ fn is_in_extras_directory(path: &Path) -> bool {
             // Pattern: ends with ".featurettes" or similar
             if name_str.contains(".featurette") || 
                name_str.contains("-featurette") {
+                return true;
+            }
+            
+            // Pattern: ends with ".sample" or "-sample"
+            if name_str.contains(".sample") || 
+               name_str.contains("-sample") {
                 return true;
             }
         }
@@ -327,6 +335,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         
         // Create Sample folder with video
+        // Note: Sample folders are now treated as extras and skipped during scanning
+        // They will be moved as-is with the parent movie
         let sample_dir = temp_dir.path().join("Sample");
         fs::create_dir(&sample_dir).unwrap();
         fs::write(sample_dir.join("sample.mkv"), "fake sample").unwrap();
@@ -336,9 +346,10 @@ mod tests {
         
         let result = scan_directory(temp_dir.path()).unwrap();
         
+        // Only the regular movie should be scanned
+        // Sample folder videos are skipped (treated as extras)
         assert_eq!(result.videos.len(), 1);
-        assert_eq!(result.samples.len(), 1);
-        assert!(result.samples[0].is_sample);
+        assert_eq!(result.samples.len(), 0);  // Sample folder files are skipped
     }
 
     #[test]

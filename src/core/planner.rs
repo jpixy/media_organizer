@@ -3572,7 +3572,7 @@ impl Planner {
         ];
         
         // Extras folder patterns (case-insensitive)
-        // These contain behind-the-scenes, deleted scenes, featurettes, etc.
+        // These contain behind-the-scenes, deleted scenes, featurettes, samples, etc.
         const EXTRAS_PATTERNS: &[&str] = &[
             "extras", "extra",
             "featurettes", "featurette",
@@ -3581,6 +3581,7 @@ impl Planner {
             "making of", "makingof",
             "bonus", "bonuses",
             "special features", "specialfeatures",
+            "sample", "samples",
         ];
 
         // Read source directory
@@ -3624,7 +3625,9 @@ impl Planner {
                     || name_lower.contains("-extras")
                     || name_lower.contains("_extras")
                     || name_lower.contains(".featurette")
-                    || name_lower.contains("-featurette");
+                    || name_lower.contains("-featurette")
+                    || name_lower.contains(".sample")
+                    || name_lower.contains("-sample");
                     
                 if is_extras {
                     let target_path = target_folder.join(name);
