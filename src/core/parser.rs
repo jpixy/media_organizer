@@ -46,12 +46,12 @@ struct AiParseResponse {
 impl AiParseResponse {
     /// Parse season value from various formats: "S01", "1", 1, etc.
     fn parse_season(&self) -> Option<u16> {
-        self.season.as_ref().and_then(|v| Self::parse_number(v))
+        self.season.as_ref().and_then(Self::parse_number)
     }
 
     /// Parse episode value from various formats: "E05", "5", 5, etc.
     fn parse_episode(&self) -> Option<u16> {
-        self.episode.as_ref().and_then(|v| Self::parse_number(v))
+        self.episode.as_ref().and_then(Self::parse_number)
     }
 
     /// Parse a number from various formats.
@@ -565,7 +565,7 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
     let caps = re.captures(trimmed)?;
     let num: u16 = caps.get(1)?.as_str().parse().ok()?;
     // Sanity check: episode numbers are usually 1-999
-    if num >= 1 && num <= 999 {
+    if (1..=999).contains(&num) {
         Some(num)
     } else {
         None
@@ -945,7 +945,7 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
     }
     
     // Pattern 2: "第N季" with Arabic numerals
-    if let Some(re) = regex::Regex::new(r"第(\d{1,2})季").ok() {
+    if let Ok(re) = regex::Regex::new(r"第(\d{1,2})季") {
         if let Some(caps) = re.captures(name) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);
@@ -954,7 +954,7 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
     }
     
     // Pattern 3: "Season N", "Season 0N"
-    if let Some(re) = regex::Regex::new(r"(?i)season\s*(\d{1,2})").ok() {
+    if let Ok(re) = regex::Regex::new(r"(?i)season\s*(\d{1,2})") {
         if let Some(caps) = re.captures(name) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);
@@ -963,7 +963,7 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
     }
     
     // Pattern 4: "S01", "S1" at end or with space
-    if let Some(re) = regex::Regex::new(r"(?i)(?:^|[\s\-_])s(\d{1,2})(?:$|[\s\-_])").ok() {
+    if let Ok(re) = regex::Regex::new(r"(?i)(?:^|[\s\-_])s(\d{1,2})(?:$|[\s\-_])") {
         if let Some(caps) = re.captures(name) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);

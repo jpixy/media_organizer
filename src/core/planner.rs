@@ -268,26 +268,55 @@ impl Planner {
                         pb.set_message(format!("Processing: {}", &video.filename));
                         
                         // For movies with cached metadata, use the cached match
-                        if media_type == MediaType::Movies && cached_movie.is_some() {
-                            match self.process_sibling_movie(
-                                video,
-                                target,
-                                cached_movie.as_ref().unwrap(),
-                                ffprobe_map.get(&video.path),
-                            ).await {
-                                Ok(item) => {
-                                    items.push(item);
+                        if media_type == MediaType::Movies {
+                            if let Some(ref cached) = cached_movie {
+                                match self.process_sibling_movie(
+                                    video,
+                                    target,
+                                    cached,
+                                    ffprobe_map.get(&video.path),
+                                ).await {
+                                    Ok(item) => {
+                                        items.push(item);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to process sibling movie {}: {}", video.filename, e);
+                                        unknown.push(UnknownItem {
+                                            source: video.clone(),
+                                            reason: e.to_string(),
+                                        });
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::warn!("Failed to process sibling movie {}: {}", video.filename, e);
-                                    unknown.push(UnknownItem {
-                                        source: video.clone(),
-                                        reason: e.to_string(),
-                                    });
+                            } else {
+                                // No cached movie, process independently
+                                match self.process_single_video_optimized(
+                                    video,
+                                    target,
+                                    media_type,
+                                    None,
+                                    &season_episodes_cache,
+                                    ffprobe_map.get(&video.path),
+                                ).await {
+                                    Ok(Some((item, _))) => {
+                                        items.push(item);
+                                    }
+                                    Ok(None) => {
+                                        unknown.push(UnknownItem {
+                                            source: video.clone(),
+                                            reason: "Failed to find TMDB match".to_string(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to process {}: {}", video.filename, e);
+                                        unknown.push(UnknownItem {
+                                            source: video.clone(),
+                                            reason: e.to_string(),
+                                        });
+                                    }
                                 }
                             }
                         } else {
-                            // For TV shows, use the existing logic
+                            // For TV shows, use the existing logic with cached show
                             match self.process_single_video_optimized(
                                 video,
                                 target,
@@ -300,13 +329,9 @@ impl Planner {
                                     items.push(item);
                                 }
                                 Ok(None) => {
-                                    let reason = match media_type {
-                                        MediaType::Movies => "Failed to find TMDB match",
-                                        MediaType::TvShows => "Failed to extract episode info",
-                                    };
                                     unknown.push(UnknownItem {
                                         source: video.clone(),
-                                        reason: reason.to_string(),
+                                        reason: "Failed to extract episode info".to_string(),
                                     });
                                 }
                                 Err(e) => {
@@ -1707,22 +1732,22 @@ impl Planner {
         }
         
         // Phase 2: Check for organized folder in ancestry
-        if let Some((dir_type, _path)) = metadata::find_title_directory(&video.parent_dir) {
-            if let DirectoryType::OrganizedDirectory(info) = dir_type {
-                // Extract episode info from filename
-                let (season, episode) = parser::extract_episode_from_filename(&video.filename);
-                return CandidateMetadata {
-                    chinese_title: Some(info.title),
-                    year: info.year,
-                    tmdb_id: Some(info.tmdb_id),
-                    imdb_id: info.imdb_id,
-                    season,
-                    episode,
-                    source: Some(metadata::MetadataSource::OrganizedFolder),
-                    confidence: 1.0,
-                    ..Default::default()
-                };
-            }
+        if let Some((DirectoryType::OrganizedDirectory(info), _path)) = 
+            metadata::find_title_directory(&video.parent_dir) 
+        {
+            // Extract episode info from filename
+            let (season, episode) = parser::extract_episode_from_filename(&video.filename);
+            return CandidateMetadata {
+                chinese_title: Some(info.title),
+                year: info.year,
+                tmdb_id: Some(info.tmdb_id),
+                imdb_id: info.imdb_id,
+                season,
+                episode,
+                source: Some(metadata::MetadataSource::OrganizedFolder),
+                confidence: 1.0,
+                ..Default::default()
+            };
         }
         
         // Phase 3: Extract from filename
@@ -1989,7 +2014,7 @@ impl Planner {
                          "aac", "dts", "ac3", "flac", "web-dl", "webrip", "bluray", "bdrip",
                          "hdtv", "dvdrip", "remux", "hdr", "10bit", "8bit"];
         
-        let parts: Vec<&str> = name_without_ext.split(|c: char| c == '.' || c == '-' || c == '_' || c == ' ').collect();
+        let parts: Vec<&str> = name_without_ext.split(['.', '-', '_', ' ']).collect();
         
         // Check if first part is just a number (episode number)
         let first_is_number = parts.first()
@@ -2011,7 +2036,7 @@ impl Planner {
         // Check for year-only pattern like "2024 SP"
         if name.contains("sp") || name.contains("ova") || name.contains("特别") {
             let digits: String = name.chars().filter(|c| c.is_ascii_digit()).collect();
-            if digits.len() == 4 && digits.parse::<u16>().map(|y| y >= 1990 && y <= 2030).unwrap_or(false) {
+            if digits.len() == 4 && digits.parse::<u16>().map(|y| (1990..=2030).contains(&y)).unwrap_or(false) {
                 return true;
             }
         }
@@ -2445,8 +2470,7 @@ impl Planner {
 
         // Helper to clean up search query
         let clean_query = |s: &str| -> String {
-            s.replace('.', " ")
-                .replace('_', " ")
+            s.replace(['.', '_'], " ")
                 .trim()
                 .to_string()
         };
@@ -2480,8 +2504,7 @@ impl Planner {
                 let cleaned = cleaned
                     .trim_start_matches("Z_")
                     .trim_start_matches("z_")
-                    .replace('.', " ")
-                    .replace('_', " ")
+                    .replace(['.', '_'], " ")
                     .trim()
                     .to_string();
                 
@@ -3234,6 +3257,7 @@ impl Planner {
 
     /// Generate target path information and operations.
     /// Returns None if country information cannot be determined (skip rather than wrong match).
+    #[allow(clippy::too_many_arguments)]
     fn generate_target_info(
         &self,
         video: &VideoFile,

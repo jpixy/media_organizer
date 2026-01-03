@@ -16,11 +16,12 @@ pub async fn execute_export(
     auto_name: bool,
 ) -> Result<()> {
     // Determine output path
-    let output_path = if auto_name || output.is_none() {
-        let filename = exporter::auto_filename();
-        output.unwrap_or_else(|| PathBuf::from(&filename))
-    } else {
-        output.unwrap()
+    let output_path = match (auto_name, output) {
+        (true, _) | (_, None) => {
+            let filename = exporter::auto_filename();
+            PathBuf::from(&filename)
+        }
+        (false, Some(path)) => path,
     };
 
     println!("{}", "[EXPORT] Collecting data...".bold().cyan());
@@ -44,22 +45,19 @@ pub async fn execute_export(
     // Show what will be exported
     println!();
     println!("Export contents:");
-    if options.only.is_none() || options.only == Some(ExportType::Config) {
-        if !options.exclude.contains(&ExportType::Config) {
+    if (options.only.is_none() || options.only == Some(ExportType::Config))
+        && !options.exclude.contains(&ExportType::Config) {
             println!("  [x] App configuration (config.toml)");
         }
-    }
-    if options.only.is_none() || options.only == Some(ExportType::Indexes) {
-        if !options.exclude.contains(&ExportType::Indexes) {
+    if (options.only.is_none() || options.only == Some(ExportType::Indexes))
+        && !options.exclude.contains(&ExportType::Indexes) {
             println!("  [x] Central index");
             println!("  [x] Disk indexes");
         }
-    }
-    if options.only.is_none() || options.only == Some(ExportType::Sessions) {
-        if !options.exclude.contains(&ExportType::Sessions) {
+    if (options.only.is_none() || options.only == Some(ExportType::Sessions))
+        && !options.exclude.contains(&ExportType::Sessions) {
             println!("  [x] Session history");
         }
-    }
     if include_secrets {
         println!("  [x] Sensitive data (API keys)");
     } else {

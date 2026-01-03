@@ -533,14 +533,8 @@ fn country_name_to_code(name: &str) -> String {
         "russia" | "俄罗斯" => "RU".to_string(),
         "hong kong" | "香港" => "HK".to_string(),
         "taiwan" | "台湾" => "TW".to_string(),
-        _ => {
-            // If already a code, return as-is
-            if name.len() == 2 && name.chars().all(|c| c.is_ascii_uppercase()) {
-                name.to_string()
-            } else {
-                name.to_string()
-            }
-        }
+        // Unknown country name or already a 2-letter code - return as-is
+        _ => name.to_string(),
     }
 }
 
@@ -572,6 +566,7 @@ pub struct SearchResults {
 }
 
 /// Search the central index.
+#[allow(clippy::too_many_arguments)]
 pub fn search(
     index: &CentralIndex,
     title: Option<&str>,

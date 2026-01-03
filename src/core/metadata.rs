@@ -262,7 +262,7 @@ fn extract_season_number(name: &str) -> Option<u16> {
     }
     
     // Pattern: "第N季" with Arabic numerals
-    if let Some(re) = regex::Regex::new(r"第(\d{1,2})季").ok() {
+    if let Ok(re) = regex::Regex::new(r"第(\d{1,2})季") {
         if let Some(caps) = re.captures(name) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);
@@ -271,7 +271,7 @@ fn extract_season_number(name: &str) -> Option<u16> {
     }
     
     // Pattern: "Season N", "Season 0N"
-    if let Some(re) = regex::Regex::new(r"(?i)^season\s*(\d{1,2})$").ok() {
+    if let Ok(re) = regex::Regex::new(r"(?i)^season\s*(\d{1,2})$") {
         if let Some(caps) = re.captures(&name_lower) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);
@@ -280,7 +280,7 @@ fn extract_season_number(name: &str) -> Option<u16> {
     }
     
     // Pattern: "S01", "S1" (standalone)
-    if let Some(re) = regex::Regex::new(r"(?i)^s(\d{1,2})$").ok() {
+    if let Ok(re) = regex::Regex::new(r"(?i)^s(\d{1,2})$") {
         if let Some(caps) = re.captures(&name_lower) {
             if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
                 return Some(num);
@@ -338,10 +338,10 @@ fn classify_as_category(name: &str) -> Option<CategoryType> {
     }
     
     // Year patterns
-    if let Some(re) = regex::Regex::new(r"^(\d{4})(?:年)?(?:新番)?$").ok() {
+    if let Ok(re) = regex::Regex::new(r"^(\d{4})(?:年)?(?:新番)?$") {
         if let Some(caps) = re.captures(name) {
             if let Some(year) = caps.get(1).and_then(|m| m.as_str().parse().ok()) {
-                if year >= 1900 && year <= 2100 {
+                if (1900..=2100).contains(&year) {
                     return Some(CategoryType::Year(year));
                 }
             }
@@ -389,7 +389,7 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
     }
     
     // Pattern: Title (Year)
-    if let Some(re) = regex::Regex::new(r"^(.+?)\s*[\(\[（](\d{4})[\)\]）]$").ok() {
+    if let Ok(re) = regex::Regex::new(r"^(.+?)\s*[\(\[（](\d{4})[\)\]）]$") {
         if let Some(caps) = re.captures(name) {
             let title_part = caps.get(1)?.as_str().trim();
             let year: u16 = caps.get(2)?.as_str().parse().ok()?;
@@ -405,7 +405,7 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
     }
     
     // Pattern: Title.Year (dots as separators)
-    if let Some(re) = regex::Regex::new(r"^(.+?)\.(\d{4})(?:\.|$)").ok() {
+    if let Ok(re) = regex::Regex::new(r"^(.+?)\.(\d{4})(?:\.|$)") {
         if let Some(caps) = re.captures(name) {
             let title_part = caps.get(1)?.as_str().replace('.', " ").trim().to_string();
             let year: u16 = caps.get(2)?.as_str().parse().ok()?;
@@ -522,10 +522,10 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     metadata.episode = episode;
     
     // Extract year from filename
-    if let Some(re) = regex::Regex::new(r"[\.\s\-_\(\[](\d{4})[\.\s\-_\)\]]").ok() {
+    if let Ok(re) = regex::Regex::new(r"[\.\s\-_\(\[](\d{4})[\.\s\-_\)\]]") {
         if let Some(caps) = re.captures(&name) {
             if let Some(year) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
-                if year >= 1900 && year <= 2100 {
+                if (1900..=2100).contains(&year) {
                     metadata.year = Some(year);
                 }
             }
@@ -534,7 +534,7 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     
     // Try to extract title (before year or technical info)
     // Pattern: "Title.Year" or "Title (Year)" or "Title 1080p"
-    if let Some(re) = regex::Regex::new(r"^([^\.]+?)[\.\s]*(?:\d{4}|1080p|720p|4k|2160p)").ok() {
+    if let Ok(re) = regex::Regex::new(r"^([^\.]+?)[\.\s]*(?:\d{4}|1080p|720p|4k|2160p)") {
         if let Some(caps) = re.captures(&name) {
             if let Some(title_match) = caps.get(1) {
                 let title_part = title_match.as_str().trim();
@@ -546,7 +546,7 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     }
     
     // Extract IMDB ID from filename (format: tt1234567 or tt12345678)
-    if let Some(re) = regex::Regex::new(r"(tt\d{7,8})").ok() {
+    if let Ok(re) = regex::Regex::new(r"(tt\d{7,8})") {
         if let Some(caps) = re.captures(&name) {
             if let Some(imdb_match) = caps.get(1) {
                 metadata.imdb_id = Some(imdb_match.as_str().to_string());

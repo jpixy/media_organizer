@@ -307,14 +307,13 @@ impl Executor {
             }
 
             // Check for target conflicts (source exists but target also exists)
-            if source_exists && target_exists {
-                if !self.config.backup_on_overwrite {
+            if source_exists && target_exists
+                && !self.config.backup_on_overwrite {
                     errors.push(format!(
                         "Target file already exists: {}",
                         item.target.full_path.display()
                     ));
                 }
-            }
         }
 
         if already_done > 0 {

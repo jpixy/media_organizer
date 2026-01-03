@@ -76,7 +76,7 @@ fn create_video_file(path: &Path) -> Result<VideoFile> {
     let metadata = std::fs::metadata(path)?;
     let modified = metadata
         .modified()
-        .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
+        .map(chrono::DateTime::<chrono::Utc>::from)
         .unwrap_or_else(|_| chrono::Utc::now());
 
     let filename = path

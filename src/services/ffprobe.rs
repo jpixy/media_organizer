@@ -118,7 +118,7 @@ pub fn extract_metadata(path: &Path) -> Result<VideoMetadata> {
     // Extract audio channels
     let audio_channels = audio_stream
         .and_then(|s| s.channels)
-        .map(|c| channels_to_string(c))
+        .map(channels_to_string)
         .unwrap_or_else(|| "unknown".to_string());
 
     // Extract format

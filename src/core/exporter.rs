@@ -13,6 +13,7 @@ use zip::{ZipArchive, ZipWriter};
 
 /// Export options.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ExportOptions {
     /// Include sensitive data (API keys)
     pub include_secrets: bool,
@@ -26,17 +27,6 @@ pub struct ExportOptions {
     pub description: Option<String>,
 }
 
-impl Default for ExportOptions {
-    fn default() -> Self {
-        Self {
-            include_secrets: false,
-            only: None,
-            exclude: Vec::new(),
-            disk: None,
-            description: None,
-        }
-    }
-}
 
 /// Types that can be exported.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +38,7 @@ pub enum ExportType {
 
 /// Import options.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ImportOptions {
     /// Dry run - don't actually import
     pub dry_run: bool,
@@ -61,17 +52,6 @@ pub struct ImportOptions {
     pub backup_first: bool,
 }
 
-impl Default for ImportOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            only: None,
-            merge: false,
-            force: false,
-            backup_first: false,
-        }
-    }
-}
 
 /// Import preview result.
 #[derive(Debug)]

@@ -5,6 +5,7 @@ use anyhow::Result;
 use colored::Colorize;
 
 /// Execute search command.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_search(
     title: Option<String>,
     actor: Option<String>,
