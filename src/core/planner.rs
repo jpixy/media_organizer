@@ -1902,10 +1902,30 @@ impl Planner {
         // Quality descriptor patterns to skip
         let is_quality_desc = |name: &str| -> bool {
             let lower = name.to_lowercase();
-            lower.contains("1080") || lower.contains("720") 
+            // Skip quality descriptors
+            if lower.contains("1080") || lower.contains("720") 
                 || lower.contains("2160") || lower.contains("4k")
                 || lower.contains("内封") || lower.contains("外挂")
-                || lower.contains("字幕") || lower.starts_with("season")
+                || lower.contains("字幕") {
+                return true;
+            }
+            // Skip season directories: S1, S01, Season 1, Season.2, 第1季
+            if regex::Regex::new(r"^s\d{1,2}$")
+                .map(|re| re.is_match(&lower))
+                .unwrap_or(false) {
+                return true;
+            }
+            if regex::Regex::new(r"^season[\s._-]?\d{1,2}$")
+                .map(|re| re.is_match(&lower))
+                .unwrap_or(false) {
+                return true;
+            }
+            if regex::Regex::new(r"^第\d{1,2}季$")
+                .map(|re| re.is_match(name))
+                .unwrap_or(false) {
+                return true;
+            }
+            false
         };
 
         // Try immediate parent first
@@ -1917,6 +1937,15 @@ impl Planner {
 
         // Try grandparent if immediate parent is a quality descriptor
         if let Some(parent) = path.parent() {
+            if let Some(name) = parent.file_name().and_then(|n| n.to_str()) {
+                if !is_quality_desc(name) {
+                    return Some(name.to_string());
+                }
+            }
+        }
+
+        // Try great-grandparent (3 levels up)
+        if let Some(parent) = path.parent().and_then(|p| p.parent()) {
             if let Some(name) = parent.file_name().and_then(|n| n.to_str()) {
                 if !is_quality_desc(name) {
                     return Some(name.to_string());
@@ -2475,6 +2504,90 @@ impl Planner {
             .and_then(|n| n.to_str())
             .map(|s| (s.to_string(), 1))
             .unwrap_or_default()
+    }
+    
+    /// Find the most meaningful parent directory name and extract season info from path.
+    /// 
+    /// Returns: (meaningful_name, depth, extracted_season)
+    /// 
+    /// For a path like: `今夜我用身体恋爱/S1/file.mp4`
+    /// Returns: ("今夜我用身体恋爱", 2, Some(1))
+    #[allow(dead_code)]
+    fn find_meaningful_parent_with_season(video: &VideoFile) -> (String, usize, Option<u16>) {
+        const MAX_DEPTH: usize = 3;
+        let mut current = video.parent_dir.as_path();
+        let mut depth = 1;
+        let mut extracted_season: Option<u16> = None;
+        
+        while depth <= MAX_DEPTH {
+            if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
+                // Try to extract season from this directory name before deciding if it's meaningful
+                if extracted_season.is_none() {
+                    extracted_season = Self::extract_season_from_dirname(name);
+                }
+                
+                // If this directory name is meaningful, use it
+                if !Self::is_meaningless_dirname(name) {
+                    tracing::debug!(
+                        "Found meaningful parent at depth {}: '{}' for '{}', season={:?}",
+                        depth, name, video.filename, extracted_season
+                    );
+                    return (name.to_string(), depth, extracted_season);
+                }
+                
+                // Otherwise, go up one level
+                if let Some(parent) = current.parent() {
+                    tracing::debug!(
+                        "Skipping meaningless dirname '{}', going up to parent (season extracted: {:?})",
+                        name, extracted_season
+                    );
+                    current = parent;
+                    depth += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Fallback to immediate parent
+        let name = video.parent_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        (name, 1, extracted_season)
+    }
+    
+    /// Extract season number from directory name.
+    /// Handles: S01, S1, Season 1, Season.2, 第1季
+    #[allow(dead_code)]
+    fn extract_season_from_dirname(name: &str) -> Option<u16> {
+        let lower = name.to_lowercase();
+        
+        // Pattern: S01, S1
+        if let Ok(re) = regex::Regex::new(r"^s(\d{1,2})$") {
+            if let Some(caps) = re.captures(&lower) {
+                return caps.get(1).and_then(|m| m.as_str().parse().ok());
+            }
+        }
+        
+        // Pattern: Season 1, Season.2, Season_3
+        if let Ok(re) = regex::Regex::new(r"^season[\s._-]?(\d{1,2})$") {
+            if let Some(caps) = re.captures(&lower) {
+                return caps.get(1).and_then(|m| m.as_str().parse().ok());
+            }
+        }
+        
+        // Pattern: 第1季
+        if let Ok(re) = regex::Regex::new(r"^第(\d{1,2})季$") {
+            if let Some(caps) = re.captures(name) {
+                return caps.get(1).and_then(|m| m.as_str().parse().ok());
+            }
+        }
+        
+        None
     }
 
     /// Try to get movie metadata directly using TMDB ID or IMDB ID from filename.

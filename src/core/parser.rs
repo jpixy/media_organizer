@@ -148,7 +148,9 @@ impl FilenameParser {
 
 注意事项：
 - 忽略分辨率（如1080p、4K、2160p）、编码格式（如x265、HEVC）、音频格式（如DTS、AAC）等技术信息
-- 忽略发布组名称（通常在方括号或末尾）
+- **重要**: 忽略字幕组/发布组名称！常见字幕组：霸王龙压制组、T-Rex、YYeTs、字幕侠、FIX字幕侠、人人影视、ZhuixinFan、rarbg、DEFLATE 等
+- 字幕组名称通常在文件名末尾，或在方括号/横杠后面，不是真正的标题！
+- 例如："流人.S01E01.HD1080P.中英双字.霸王龙压制组T-Rex.mp4" 的中文标题是"流人"，不是"霸王龙压制组"
 - 如果文件名中包含中英文混合，请分别提取
 - 如果无法确定某个字段，返回null
 - **重要**: 年份必须是文件名中明确出现的4位数字(1900-2030)，不要猜测！如果文件名中没有年份，返回null
@@ -228,6 +230,10 @@ impl FilenameParser {
 
     /// Validate parsed result.
     fn validate_result(&self, mut parsed: ParsedFilename) -> Result<ParsedFilename> {
+        // Filter out subtitle group names from titles
+        parsed.title = parsed.title.and_then(|t| filter_subtitle_group(&t));
+        parsed.original_title = parsed.original_title.and_then(|t| filter_subtitle_group(&t));
+        
         // Validate year range (1900 - current year + 5)
         if let Some(year) = parsed.year {
             let current_year = chrono::Utc::now().year() as u16;
@@ -529,6 +535,12 @@ pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16
         return (Some(1), Some(ep)); // Default to season 1
     }
     
+    // Pattern 6: Title-02, Title_02, Title.02, Title 02 (episode at end with separator)
+    // Handle "不伦食堂-02.mp4", "今夜我用身体恋爱_02.mp4"
+    if let Some(ep) = regex_match_trailing_episode(&name) {
+        return (Some(1), Some(ep)); // Default to season 1
+    }
+    
     (None, None)
 }
 
@@ -608,6 +620,33 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
     let num: u16 = caps.get(1)?.as_str().parse().ok()?;
     // Sanity check: episode numbers are usually 1-999
     if (1..=999).contains(&num) {
+        Some(num)
+    } else {
+        None
+    }
+}
+
+/// Match trailing episode number with separator.
+/// 
+/// Handles formats like:
+/// - "不伦食堂-02" → episode 2
+/// - "今夜我用身体恋爱_03" → episode 3
+/// - "标题.05" → episode 5
+/// - "Show Name 10" → episode 10
+/// - "不伦食堂-04 end" → episode 4 (ignores "end" suffix)
+fn regex_match_trailing_episode(s: &str) -> Option<u16> {
+    let trimmed = s.trim();
+    
+    // Pattern: title followed by separator and episode number at end
+    // Separator can be -, _, ., or space
+    // Optionally followed by "end", "END", "final" etc.
+    let re = regex::Regex::new(r"[-_.\s](\d{1,3})(?:\s+(?:end|final|END|FINAL))?$").ok()?;
+    let caps = re.captures(trimmed)?;
+    let num: u16 = caps.get(1)?.as_str().parse().ok()?;
+    
+    // Sanity check: episode numbers are usually 1-999
+    // Also filter out numbers that are likely years (1900-2099)
+    if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
         Some(num)
     } else {
         None
@@ -1014,4 +1053,58 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
     }
     
     None
+}
+
+/// Filter out subtitle group names from title.
+/// 
+/// Returns None if the entire title is a subtitle group name,
+/// otherwise returns the cleaned title (if different) or the original.
+/// 
+/// Common subtitle groups:
+/// - Chinese: 霸王龙压制组, 字幕侠, FIX字幕侠, 人人影视, 追新番, 擦枪字幕组
+/// - English: T-Rex, YYeTs, rarbg, DEFLATE, ZeroTV, NF, AMZN
+fn filter_subtitle_group(title: &str) -> Option<String> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    
+    // Common subtitle group patterns (case-insensitive for English)
+    let subtitle_groups_exact = [
+        // Chinese subtitle groups (exact match)
+        "霸王龙压制组", "霸王龙压制组T-Rex", "霸王龙", "T-Rex",
+        "字幕侠", "FIX字幕侠", "人人影视", "YYeTs", "追新番", "ZhuixinFan",
+        "擦枪字幕组", "CMCT", "官方中字", "中英双字", "中字",
+        // Common release groups (exact match)
+        "rarbg", "DEFLATE", "ZeroTV", "NF", "AMZN", "HMAX",
+        "DnO", "Coo7", "EX8", "huanyuezmz", "TheTaoSong",
+    ];
+    
+    let lower = trimmed.to_lowercase();
+    
+    // Check for exact match with subtitle group
+    for group in &subtitle_groups_exact {
+        if lower == group.to_lowercase() {
+            tracing::debug!("Filtering out subtitle group as title: '{}'", trimmed);
+            return None;
+        }
+    }
+    
+    // Check if title contains mostly subtitle group patterns
+    let contains_patterns = [
+        "压制组", "字幕组", "字幕侠", "人人影视", 
+        "rarbg", "deflate", "zerotv",
+    ];
+    
+    for pattern in &contains_patterns {
+        if lower.contains(&pattern.to_lowercase()) {
+            // If the title is primarily a subtitle group reference
+            if trimmed.len() < 20 {
+                tracing::debug!("Filtering out subtitle group pattern: '{}'", trimmed);
+                return None;
+            }
+        }
+    }
+    
+    Some(trimmed.to_string())
 }
