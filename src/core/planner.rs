@@ -430,7 +430,7 @@ impl Planner {
             // Create metadata with extracted IDs
             let mut path_meta = metadata::CandidateMetadata::default();
             path_meta.tmdb_id = path_tmdb_id;
-            path_meta.imdb_id = path_imdb_id;
+            path_meta.imdb_id = path_imdb_id.clone();
             
             if media_type == MediaType::Movies {
                 if let Some(movie_metadata) = self.try_direct_id_lookup(&path_meta).await? {
@@ -497,8 +497,38 @@ impl Planner {
                     )));
                 }
             } else if media_type == MediaType::TvShows {
-                // For TV shows, try to use the TMDB ID from path
-                if let Some(tmdb_id) = path_tmdb_id {
+                // For TV shows, try direct lookup using IMDB ID or TMDB ID from path
+                let resolved_tmdb_id = if let Some(tmdb_id) = path_tmdb_id {
+                    Some(tmdb_id)
+                } else if let Some(ref imdb_id) = path_imdb_id {
+                    // Use TMDB's find API to convert IMDB ID to TMDB ID
+                    if let Some(client) = &self.tmdb_client {
+                        match client.find_tv_by_imdb_id(imdb_id).await {
+                            Ok(Some(tv_tmdb_id)) => {
+                                tracing::info!(
+                                    "[PATH-ID] Resolved TV IMDB {} -> TMDB {}",
+                                    imdb_id, tv_tmdb_id
+                                );
+                                Some(tv_tmdb_id)
+                            }
+                            Ok(None) => {
+                                tracing::warn!("[PATH-ID] No TV show found for IMDB ID: {}", imdb_id);
+                                None
+                            }
+                            Err(e) => {
+                                tracing::warn!("[PATH-ID] Failed to lookup IMDB ID {}: {}", imdb_id, e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                
+                if let Some(tmdb_id) = resolved_tmdb_id {
+                    // Try to use existing organized folder logic
                     if let Some(folder_info) = self.find_organized_tvshow_folder(&video.parent_dir) {
                         tracing::info!(
                             "[PATH-ID] TV show file in folder with ID: {} -> tmdb{}",
@@ -512,6 +542,98 @@ impl Planner {
                             season_cache,
                             precomputed_ffprobe,
                         ).await;
+                    }
+                    
+                    // If not in organized folder, fetch show details and process
+                    if let Some(client) = &self.tmdb_client {
+                        if let Ok(show_details) = client.get_tv_details(tmdb_id).await {
+                            let show_metadata = self.build_tvshow_metadata_from_details(&show_details);
+                            
+                            // Extract episode info from filename
+                            let (season_num, episode_num) = parser::extract_episode_from_filename(&video.filename);
+                            let season = season_num.unwrap_or(1);
+                            let episode = episode_num.unwrap_or(1);
+                            
+                            // Get episode metadata from TMDB
+                            let episode_metadata = if let Ok(ep_details) = client.get_episode_details(tmdb_id, season, episode).await {
+                                Some(EpisodeMetadata {
+                                    name: ep_details.name.clone(),
+                                    original_name: None, // Not available in EpisodeDetails
+                                    episode_number: ep_details.episode_number,
+                                    season_number: ep_details.season_number,
+                                    air_date: ep_details.air_date.clone(),
+                                    overview: ep_details.overview.clone(),
+                                })
+                            } else {
+                                None
+                            };
+                            
+                            // Build parsed info
+                            let parsed = ParsedFilename {
+                                title: Some(show_metadata.name.clone()),
+                                original_title: Some(show_metadata.original_name.clone()),
+                                year: Some(show_metadata.year),
+                                season: Some(season),
+                                episode: Some(episode),
+                                confidence: 1.0,
+                                raw_response: Some("path_id_lookup".to_string()),
+                            };
+                            
+                            // Get video metadata
+                            let video_metadata = match precomputed_ffprobe {
+                                Some(meta) => meta.clone(),
+                                None => {
+                                    let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                                    let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                                    ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
+                                }
+                            };
+                            
+                            // Generate target info - tvshow_metadata needs to be a tuple
+                            let tvshow_tuple = (show_metadata.clone(), episode_metadata.clone());
+                            let (target_info, operations) = match self.generate_target_info(
+                                video,
+                                &None,
+                                &Some(tvshow_tuple),
+                                &parsed,
+                                &video_metadata,
+                                target,
+                                media_type,
+                            )? {
+                                Some(result) => result,
+                                None => return Ok(None),
+                            };
+                            
+                            tracing::info!(
+                                "[PATH-ID] Found TV show via path ID: {} S{:02}E{:02} ({})",
+                                show_metadata.name,
+                                season,
+                                episode,
+                                video.filename
+                            );
+                            
+                            return Ok(Some((
+                                PlanItem {
+                                    id: Uuid::new_v4().to_string(),
+                                    status: PlanItemStatus::Pending,
+                                    source: video.clone(),
+                                    parsed: ParsedInfo {
+                                        title: parsed.title,
+                                        original_title: parsed.original_title,
+                                        year: parsed.year,
+                                        confidence: 1.0,
+                                        raw_response: parsed.raw_response,
+                                    },
+                                    movie_metadata: None,
+                                    tvshow_metadata: Some(show_metadata.clone()),
+                                    episode_metadata,
+                                    video_metadata,
+                                    target: target_info,
+                                    operations,
+                                },
+                                Some(show_metadata),
+                            )));
+                        }
                     }
                 }
             }
