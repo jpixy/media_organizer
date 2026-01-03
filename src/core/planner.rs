@@ -1478,12 +1478,46 @@ impl Planner {
         let mut groups: std::collections::HashMap<PathBuf, Vec<VideoFile>> = std::collections::HashMap::new();
 
         for video in videos {
-            // Use the immediate parent directory as the grouping key
-            // This correctly handles both simple and nested directory structures
-            groups.entry(video.parent_dir.clone()).or_default().push(video.clone());
+            // Use intelligent parent lookup to determine the grouping key
+            // This groups files from "4K/", "1080p/", "S01/", "S02/" under their common
+            // meaningful parent directory
+            let group_key = Self::find_meaningful_parent_dir(video);
+            groups.entry(group_key).or_default().push(video.clone());
         }
 
         groups
+    }
+    
+    /// Find the meaningful parent directory path (not just name) for grouping.
+    /// 
+    /// This returns the path to the first parent directory that has a meaningful name.
+    /// Used for grouping videos that are in technical subdirectories.
+    fn find_meaningful_parent_dir(video: &VideoFile) -> PathBuf {
+        const MAX_DEPTH: usize = 3;
+        let mut current = video.parent_dir.as_path();
+        let mut depth = 1;
+        
+        while depth <= MAX_DEPTH {
+            if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
+                // If this directory name is meaningful, use this path
+                if !Self::is_meaningless_dirname(name) {
+                    return current.to_path_buf();
+                }
+                
+                // Otherwise, go up one level
+                if let Some(parent) = current.parent() {
+                    current = parent;
+                    depth += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Fallback to immediate parent
+        video.parent_dir.clone()
     }
 
     /// Process a single video file with optional cached TV show metadata.
@@ -1747,13 +1781,13 @@ impl Planner {
     }
 
     /// Build the input string for AI parsing.
+    /// 
     /// If the file is in a subdirectory with a meaningful name, include it for better context.
+    /// This function now uses intelligent parent directory lookup to skip meaningless
+    /// subdirectories like "4K", "S01", "WEB-DL" etc.
     fn build_parse_input(&self, video: &VideoFile) -> String {
-        // Get parent directory name
-        let parent_name = video.parent_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        // Use intelligent parent lookup to skip meaningless directories
+        let (parent_name, depth) = Self::find_meaningful_parent_name(video);
         
         // Check if filename lacks meaningful title info
         // (e.g., just year + format like "2024 SP.mp4" or "E01.mkv")
@@ -1771,8 +1805,8 @@ impl Planner {
         if filename_seems_minimal && parent_has_title {
             // Combine parent dir name and filename for better context
             tracing::info!(
-                "Using parent dir for context: '{}' + '{}'",
-                parent_name, video.filename
+                "Using parent dir for context: '{}' + '{}' (depth: {})",
+                parent_name, video.filename, depth
             );
             format!("{} - {}", parent_name, video.filename)
         } else {
@@ -2128,6 +2162,125 @@ impl Planner {
         }
         
         false
+    }
+
+    /// Check if a directory name is "meaningless" for title extraction.
+    /// 
+    /// These are common technical/organizational subdirectories that don't contain
+    /// the actual media title. When encountered, we should look at parent directories.
+    /// 
+    /// Examples:
+    /// - Resolution: "4K", "1080p", "2160p", "720p"
+    /// - Season: "S01", "S02", "Season 1", "Season.2"
+    /// - Quality: "WEB-DL", "BluRay", "BDRip"
+    /// - Technical: "HEVC", "x265", "HDR"
+    fn is_meaningless_dirname(name: &str) -> bool {
+        let lower = name.to_lowercase();
+        
+        // Resolution patterns
+        if regex::Regex::new(r"^(4k|1080p|2160p|720p|480p|uhd|hd|sd)$")
+            .map(|re| re.is_match(&lower))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        
+        // Season patterns: S01, S02, Season 1, Season.2, 第1季
+        if regex::Regex::new(r"^s\d{1,2}$")
+            .map(|re| re.is_match(&lower))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if regex::Regex::new(r"^season[\s._-]?\d{1,2}$")
+            .map(|re| re.is_match(&lower))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if regex::Regex::new(r"^第\d{1,2}季$")
+            .map(|re| re.is_match(name))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        
+        // Quality/source patterns
+        let quality_patterns = [
+            "web-dl", "webrip", "webdl", "web",
+            "bluray", "blu-ray", "bdrip", "brrip",
+            "dvdrip", "dvd", "hdtv", "hdtvrip",
+            "remux", "encode", "repack",
+        ];
+        if quality_patterns.iter().any(|&p| lower == p) {
+            return true;
+        }
+        
+        // Codec patterns (when used as folder name)
+        let codec_patterns = [
+            "hevc", "h265", "x265", "h264", "x264", "avc",
+            "hdr", "hdr10", "dolby", "dv", "atmos",
+        ];
+        if codec_patterns.iter().any(|&p| lower == p) {
+            return true;
+        }
+        
+        // Common organizational folders
+        let org_patterns = ["video", "videos", "media", "downloads", "new", "temp"];
+        if org_patterns.iter().any(|&p| lower == p) {
+            return true;
+        }
+        
+        false
+    }
+
+    /// Find the most meaningful parent directory name by skipping technical subdirectories.
+    /// 
+    /// For a path like: `许你耀眼/4K/01 4K.mp4`
+    /// Returns: ("许你耀眼", 2) - the meaningful name and depth
+    /// 
+    /// For a path like: `暗夜情报员 The.Night.Agent (2023)/S02/S02E01.mp4`
+    /// Returns: ("暗夜情报员 The.Night.Agent (2023)", 2) - the meaningful name and depth
+    /// 
+    /// Max depth is limited to 3 levels to avoid going too far up.
+    fn find_meaningful_parent_name(video: &VideoFile) -> (String, usize) {
+        const MAX_DEPTH: usize = 3;
+        let mut current = video.parent_dir.as_path();
+        let mut depth = 1;
+        
+        while depth <= MAX_DEPTH {
+            if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
+                // If this directory name is meaningful, use it
+                if !Self::is_meaningless_dirname(name) {
+                    tracing::debug!(
+                        "Found meaningful parent at depth {}: '{}' for '{}'",
+                        depth, name, video.filename
+                    );
+                    return (name.to_string(), depth);
+                }
+                
+                // Otherwise, go up one level
+                if let Some(parent) = current.parent() {
+                    tracing::debug!(
+                        "Skipping meaningless dirname '{}', going up to parent",
+                        name
+                    );
+                    current = parent;
+                    depth += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Fallback to immediate parent
+        video.parent_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| (s.to_string(), 1))
+            .unwrap_or_default()
     }
 
     /// Try to get movie metadata directly using TMDB ID or IMDB ID from filename.
