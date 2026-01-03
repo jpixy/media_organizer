@@ -5,10 +5,12 @@ A smart media file organizer that uses AI to parse filenames and fetch metadata 
 ## Features
 
 - **AI-powered filename parsing** - Uses local Ollama + Qwen 2.5 model for intelligent movie/show recognition
-- **IMDB ID direct lookup** - Highest priority: directly fetches metadata using IMDB ID from filename (skips AI)
+- **IMDB ID direct lookup** - Highest priority: directly fetches metadata using IMDB ID from filename (for both movies and TV shows)
 - **TMDB metadata** - Auto-fetches movie details, posters, directors, actors, and collection info
 - **Smart renaming** - Renames files and folders in standardized format
+- **Smart directory parsing** - Automatically skips technical subdirectories (4K/, S01/, WEB-DL/) and sorting prefixes (A_, X_, 01_)
 - **Subtitle support** - Automatically moves subtitle files (.srt, .ass, .ssa, .sub, .vtt) and folders (Subs/) with video
+- **Extras/Sample support** - Moves Extras, Featurettes, Sample folders and sample video files with main movie
 - **Safe operations** - Generate plan first, preview, then execute with full rollback support
 - **GPU acceleration** - Supports NVIDIA GPU for accelerated AI inference
 - **Central indexing** - Build searchable index across multiple disks
@@ -258,8 +260,15 @@ Movies_organized/
 └── CN_China/
     └── [Movie Name](Year)-ttIMDB_ID-tmdbTMDB_ID/
         ├── [Movie Name](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.mp4
+        ├── [Movie Name](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels-sample.mp4  (if exists)
         ├── movie.nfo
-        └── poster.jpg
+        ├── poster.jpg
+        ├── Subs/                    (subtitle folder, if exists)
+        │   └── *.srt, *.ass, ...
+        ├── Extras/                  (extras folder, if exists)
+        │   └── behind_the_scenes.mkv, deleted_scenes.mkv, ...
+        └── Sample/                  (sample folder, if exists)
+            └── preview.mp4
 ```
 
 ### TV Show Folder Structure
@@ -330,13 +339,55 @@ ollama serve 2>&1 | grep -i "inference compute"
 
 ## Metadata Lookup Priority
 
-The tool uses a smart priority system for metadata lookup:
+The tool uses a smart priority system for metadata lookup (works for both Movies and TV Shows):
 
-1. **TMDB ID** (highest priority) - If filename contains `tmdb12345`, fetches directly from TMDB
-2. **IMDB ID** - If filename contains `tt1234567`, uses TMDB's find API to lookup
+1. **TMDB ID** (highest priority) - If path contains `tmdb12345`, fetches directly from TMDB
+2. **IMDB ID** - If path contains `tt1234567`, uses TMDB's find API to lookup
 3. **AI parsing + title search** - Uses Ollama AI to parse filename, then searches TMDB by title
 
-This means files with IMDB IDs in their names (e.g., `Movie (2023) tt1234567.mkv`) can be matched even when title search fails.
+**Path includes:** filename AND all parent directory names.
+
+**Examples:**
+```
+Movie (2023) tt1234567.mkv           -> Uses IMDB ID from filename
+X_许你耀眼.2025.tt32582480/01 4K.mp4  -> Uses IMDB ID from directory name
+[Movie](2024)-tmdb945801/movie.mkv   -> Uses TMDB ID from directory name
+```
+
+This means files with IMDB IDs anywhere in their path can be matched even when title search fails.
+
+## Smart Directory Parsing
+
+The tool intelligently handles complex directory structures:
+
+### Technical Subdirectories (auto-skipped)
+
+When parsing directory names, the following subdirectories are automatically skipped to find the actual title:
+
+| Category | Patterns |
+|----------|----------|
+| Resolution | `4K`, `1080p`, `2160p`, `720p`, `480p`, `UHD`, `HD`, `SD` |
+| Season | `S01`, `S02`, `Season 1`, `Season.2`, `第1季` |
+| Quality | `WEB-DL`, `BluRay`, `BDRip`, `DVDRip`, `HDTV`, `Remux` |
+| Codec | `HEVC`, `x265`, `H264`, `HDR`, `HDR10`, `Dolby`, `Atmos` |
+
+**Example:**
+```
+许你耀眼/4K/01 4K.mp4
+         ↑
+    Skipped (resolution)
+Result: "许你耀眼" used as title
+```
+
+### Sorting Prefixes (auto-removed)
+
+Common sorting prefixes are automatically removed:
+
+| Pattern | Example | Result |
+|---------|---------|--------|
+| Letter + separator | `X_许你耀眼` | `许你耀眼` |
+| Letter + separator | `A-剧名` | `剧名` |
+| Number + separator | `01_电影名` | `电影名` |
 
 ## Subtitle Handling
 
@@ -349,6 +400,21 @@ When moving video files, the tool automatically detects and moves related subtit
 - `.srt`, `.ass`, `.ssa`, `.sub`, `.idx`, `.vtt`, `.sup`, `.smi`
 
 Subtitles are moved **without renaming** to preserve their original naming conventions.
+
+## Extras and Sample Handling
+
+The tool automatically moves supplementary content with the main movie:
+
+**Supported extras folders:**
+- `Extras`, `Extra`, `Featurettes`, `Behind the Scenes`, `Deleted Scenes`, `Making of`, `Bonus`
+
+**Supported sample folders:**
+- `Sample`, `Samples`
+
+**Sample video files:**
+- Any video file with `sample` in the filename (e.g., `movie.sample.mkv`, `sample-video.avi`)
+
+These are moved **as-is** to the organized movie folder, preserving their original structure.
 
 ## Troubleshooting
 

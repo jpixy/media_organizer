@@ -207,8 +207,14 @@ A: Check if GPU is enabled. Run `nvidia-smi` to confirm GPU is available, see [G
 ### Q: TMDB connection timeout?
 A: In mainland China, you need a proxy to access TMDB. Ensure your proxy is enabled.
 
-### Q: Movie info not found?
-A: Try adding the IMDB ID to the filename (e.g., `Movie (2023) tt1234567.mkv`). Files with IMDB IDs have the highest lookup priority and skip AI parsing entirely. If IMDB ID is not available, check the `unknown` section in `plan.json`.
+### Q: Movie/TV show info not found?
+A: Try adding the IMDB ID to the filename or directory name (e.g., `Movie (2023) tt1234567.mkv` or `X_剧名.2025.tt32582480/`). Files with IMDB IDs (in filename or any parent directory) have the highest lookup priority and skip AI parsing entirely. If IMDB ID is not available, check the `unknown` section in `plan.json`.
+
+### Q: Files in 4K/, S01/ subdirectories not recognized?
+A: The tool automatically skips technical subdirectories (4K, 1080p, S01, Season 1, WEB-DL, etc.) to find the actual title from parent directories. No action needed.
+
+### Q: Sorting prefixes (A_, X_, 01_) causing issues?
+A: These are automatically removed. `X_许你耀眼` becomes `许你耀眼` for matching.
 
 ### Q: How to rollback?
 A: Run `media-organizer rollback <rollback.json>` using the rollback file generated during execution.
