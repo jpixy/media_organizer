@@ -415,44 +415,130 @@ impl Planner {
         season_cache: &SeasonEpisodesCache,
         precomputed_ffprobe: Option<&VideoMetadata>,
     ) -> Result<Option<(PlanItem, Option<TvShowMetadata>)>> {
+        // ============================================================
+        // HIGHEST PRIORITY: Check for TMDB/IMDB ID in filename OR parent directories
+        // If found, use direct lookup - this bypasses all other parsing logic
+        // ============================================================
+        let (path_tmdb_id, path_imdb_id) = metadata::extract_ids_from_path(&video.path);
+        
+        if path_tmdb_id.is_some() || path_imdb_id.is_some() {
+            tracing::debug!(
+                "[PATH-ID] Found IDs in path: tmdb={:?}, imdb={:?} for {}",
+                path_tmdb_id, path_imdb_id, video.filename
+            );
+            
+            // Create metadata with extracted IDs
+            let mut path_meta = metadata::CandidateMetadata::default();
+            path_meta.tmdb_id = path_tmdb_id;
+            path_meta.imdb_id = path_imdb_id;
+            
+            if media_type == MediaType::Movies {
+                if let Some(movie_metadata) = self.try_direct_id_lookup(&path_meta).await? {
+                    tracing::info!(
+                        "[PATH-ID] Found movie via path ID: {} ({})",
+                        movie_metadata.title,
+                        video.filename
+                    );
+                    
+                    // Build parsed info
+                    let parsed = ParsedFilename {
+                        title: Some(movie_metadata.title.clone()),
+                        original_title: Some(movie_metadata.original_title.clone()),
+                        year: Some(movie_metadata.year),
+                        confidence: 1.0,
+                        raw_response: Some("path_id_lookup".to_string()),
+                        ..Default::default()
+                    };
+                    
+                    // Get video metadata
+                    let video_metadata = match precomputed_ffprobe {
+                        Some(meta) => meta.clone(),
+                        None => {
+                            let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                            let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                            ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
+                        }
+                    };
+                    
+                    // Generate target info
+                    let (target_info, operations) = match self.generate_target_info(
+                        video,
+                        &Some(movie_metadata.clone()),
+                        &None,
+                        &parsed,
+                        &video_metadata,
+                        target,
+                        media_type,
+                    )? {
+                        Some(result) => result,
+                        None => return Ok(None),
+                    };
+                    
+                    return Ok(Some((
+                        PlanItem {
+                            id: Uuid::new_v4().to_string(),
+                            status: PlanItemStatus::Pending,
+                            source: video.clone(),
+                            parsed: ParsedInfo {
+                                title: parsed.title,
+                                original_title: parsed.original_title,
+                                year: parsed.year,
+                                confidence: 1.0,
+                                raw_response: parsed.raw_response,
+                            },
+                            movie_metadata: Some(movie_metadata),
+                            tvshow_metadata: None,
+                            episode_metadata: None,
+                            video_metadata,
+                            target: target_info,
+                            operations,
+                        },
+                        None,
+                    )));
+                }
+            } else if media_type == MediaType::TvShows {
+                // For TV shows, try to use the TMDB ID from path
+                if let Some(tmdb_id) = path_tmdb_id {
+                    if let Some(folder_info) = self.find_organized_tvshow_folder(&video.parent_dir) {
+                        tracing::info!(
+                            "[PATH-ID] TV show file in folder with ID: {} -> tmdb{}",
+                            video.filename,
+                            tmdb_id
+                        );
+                        return self.process_new_file_in_organized_folder(
+                            video,
+                            target,
+                            &folder_info,
+                            season_cache,
+                            precomputed_ffprobe,
+                        ).await;
+                    }
+                }
+            }
+        }
+        
+        // ============================================================
         // Step 0: Check if this is an already-organized file
         // If so, parse using regex instead of AI for better accuracy
+        // ============================================================
         if parser::is_organized_filename(&video.filename) {
             tracing::debug!("[ORGANIZED] Detected already-organized file: {}", video.filename);
             return self.process_organized_file(
                 video,
                 target,
                 media_type,
-                cached_show,  // Pass cached show to avoid redundant TMDB calls
+                cached_show,
                 season_cache,
                 precomputed_ffprobe,
             ).await;
         }
         
-        // Step 0.5: Check if the file is in an organized folder (e.g., newly added files)
-        // This handles the case where a folder was already organized, but new files were added later.
-        // Example: [罚罪2](2025)-tt36771056-tmdb296146/Season 01/19.mp4
-        if media_type == MediaType::TvShows {
-            if let Some(folder_info) = self.find_organized_tvshow_folder(&video.parent_dir) {
-                tracing::debug!(
-                    "[ORGANIZED-FOLDER] File in organized folder: {} -> tmdb{}",
-                    video.filename,
-                    folder_info.tmdb_id
-                );
-                return self.process_new_file_in_organized_folder(
-                    video,
-                    target,
-                    &folder_info,
-                    season_cache,
-                    precomputed_ffprobe,
-                ).await;
-            }
-        }
-        
-        // Step 1: Extract IDs from filename FIRST (highest priority - skip AI if we have ID)
+        // ============================================================
+        // Step 1: Extract info from filename
+        // ============================================================
         let filename_meta = metadata::extract_from_filename(&video.filename);
         
-        // Priority 1: Direct TMDB/IMDB ID lookup (skip AI entirely)
+        // Try direct ID lookup from filename (in case path extraction missed something)
         if media_type == MediaType::Movies {
             if let Some(movie_metadata) = self.try_direct_id_lookup(&filename_meta).await? {
                 tracing::info!(

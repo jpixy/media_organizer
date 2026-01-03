@@ -574,6 +574,83 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     metadata
 }
 
+/// Extract IMDB/TMDB IDs from a file path (checks filename and all parent directories).
+/// 
+/// This is the highest priority check - if we find an ID anywhere in the path,
+/// we should use it directly without AI parsing.
+/// 
+/// Returns (tmdb_id, imdb_id)
+pub fn extract_ids_from_path(path: &std::path::Path) -> (Option<u64>, Option<String>) {
+    let mut tmdb_id: Option<u64> = None;
+    let mut imdb_id: Option<String> = None;
+    
+    // Regex patterns
+    let imdb_re = regex::Regex::new(r"(tt\d{7,8})").ok();
+    let tmdb_re = regex::Regex::new(r"tmdb(\d+)").ok();
+    // Also match plain numeric IDs at the end of organized folders: -IMDB-TMDB format
+    // e.g., "2004-[Title]-[Title]-tt0372183-2502" -> TMDB is 2502
+    let legacy_format_re = regex::Regex::new(r"-tt(\d+)-(\d+)$").ok();
+    
+    // Check filename first
+    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+        if let Some(ref re) = imdb_re {
+            if let Some(caps) = re.captures(filename) {
+                imdb_id = caps.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+        if let Some(ref re) = tmdb_re {
+            if let Some(caps) = re.captures(filename) {
+                tmdb_id = caps.get(1).and_then(|m| m.as_str().parse().ok());
+            }
+        }
+    }
+    
+    // Check parent directories (walk up the path)
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if let Some(dirname) = dir.file_name().and_then(|n| n.to_str()) {
+            // Check for IMDB ID
+            if imdb_id.is_none() {
+                if let Some(ref re) = imdb_re {
+                    if let Some(caps) = re.captures(dirname) {
+                        imdb_id = caps.get(1).map(|m| m.as_str().to_string());
+                    }
+                }
+            }
+            
+            // Check for TMDB ID (format: tmdb12345)
+            if tmdb_id.is_none() {
+                if let Some(ref re) = tmdb_re {
+                    if let Some(caps) = re.captures(dirname) {
+                        tmdb_id = caps.get(1).and_then(|m| m.as_str().parse().ok());
+                    }
+                }
+            }
+            
+            // Check for legacy format: -tt0372183-2502 (IMDB-TMDB at the end)
+            if tmdb_id.is_none() {
+                if let Some(ref re) = legacy_format_re {
+                    if let Some(caps) = re.captures(dirname) {
+                        if imdb_id.is_none() {
+                            imdb_id = caps.get(1).map(|m| format!("tt{}", m.as_str()));
+                        }
+                        tmdb_id = caps.get(2).and_then(|m| m.as_str().parse().ok());
+                    }
+                }
+            }
+        }
+        
+        // Stop if we found both IDs
+        if tmdb_id.is_some() && imdb_id.is_some() {
+            break;
+        }
+        
+        current = dir.parent();
+    }
+    
+    (tmdb_id, imdb_id)
+}
+
 /// Merge metadata from filename and directory, with filename taking priority.
 pub fn merge_info(filename_info: CandidateMetadata, dir_info: CandidateMetadata) -> CandidateMetadata {
     CandidateMetadata {
