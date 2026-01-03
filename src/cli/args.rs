@@ -230,6 +230,21 @@ pub enum IndexAction {
         #[arg(long, default_value = "table")]
         format: String,
     },
+
+    /// List movie collections (franchise series)
+    Collections {
+        /// Filter: complete, incomplete, or all
+        #[arg(long, default_value = "all")]
+        filter: String,
+
+        /// Output format: table, simple, json
+        #[arg(long, default_value = "table")]
+        format: String,
+
+        /// Show movie paths
+        #[arg(long)]
+        paths: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

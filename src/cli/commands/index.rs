@@ -29,6 +29,9 @@ pub async fn execute_index(action: IndexAction) -> Result<()> {
         IndexAction::Duplicates { media_type, format } => {
             find_duplicates(&media_type, &format).await
         }
+        IndexAction::Collections { filter, format, paths } => {
+            list_collections(&filter, &format, paths).await
+        }
     }
 }
 
@@ -586,3 +589,208 @@ async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
     Ok(())
 }
 
+/// Data structure for collection output.
+#[derive(Debug, Clone, serde::Serialize)]
+struct CollectionOutput {
+    id: u64,
+    name: String,
+    owned_count: usize,
+    total_in_collection: usize,
+    status: String,
+    movies: Vec<CollectionMovieOutput>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct CollectionMovieOutput {
+    title: String,
+    year: Option<u16>,
+    disk: String,
+    path: Option<String>,
+    online: bool,
+}
+
+/// List movie collections.
+async fn list_collections(filter: &str, format: &str, show_paths: bool) -> Result<()> {
+    let index = indexer::load_central_index()?;
+
+    // Build collection output list
+    let collections: Vec<CollectionOutput> = index
+        .collections
+        .values()
+        .filter(|c| c.owned_count > 0)
+        .map(|c| {
+            let status = if c.total_in_collection > 0 && c.owned_count >= c.total_in_collection {
+                "Complete".to_string()
+            } else if c.total_in_collection > 0 {
+                "Incomplete".to_string()
+            } else {
+                // total_in_collection == 0 means we don't know the total
+                "Unknown".to_string()
+            };
+
+            // Get movie paths from central index
+            let movies: Vec<CollectionMovieOutput> = c
+                .movies
+                .iter()
+                .filter(|cm| cm.owned) // Only show owned movies
+                .map(|cm| {
+                    let disk = cm.disk.clone().unwrap_or_default();
+                    
+                    // Find the movie in central index to get path
+                    let movie_entry = index.movies.iter().find(|m| {
+                        m.tmdb_id == Some(cm.tmdb_id) && m.disk == disk
+                    });
+                    
+                    let path = if show_paths {
+                        movie_entry.map(|m| m.relative_path.clone())
+                    } else {
+                        None
+                    };
+
+                    let online = if !disk.is_empty() {
+                        indexer::is_disk_online(&disk)
+                    } else {
+                        false
+                    };
+
+                    CollectionMovieOutput {
+                        title: cm.title.clone(),
+                        year: cm.year,
+                        disk,
+                        path,
+                        online,
+                    }
+                })
+                .collect();
+
+            CollectionOutput {
+                id: c.id,
+                name: c.name.clone(),
+                owned_count: c.owned_count,
+                total_in_collection: c.total_in_collection,
+                status,
+                movies,
+            }
+        })
+        .collect();
+
+    // Apply filter
+    let collections: Vec<_> = match filter {
+        "complete" => collections.into_iter().filter(|c| c.status == "Complete").collect(),
+        "incomplete" => collections.into_iter().filter(|c| c.status == "Incomplete").collect(),
+        _ => collections,
+    };
+
+    // Sort by name
+    let mut collections = collections;
+    collections.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Output
+    match format {
+        "json" => {
+            let json = serde_json::to_string_pretty(&collections)?;
+            println!("{}", json);
+        }
+        "simple" => {
+            if collections.is_empty() {
+                println!("No collections found.");
+            } else {
+                println!("Found {} collections:\n", collections.len());
+                for c in &collections {
+                    let status_str = match c.status.as_str() {
+                        "Complete" => "[COMPLETE]",
+                        "Incomplete" => "[INCOMPLETE]",
+                        _ => "[UNKNOWN]",
+                    };
+                    println!(
+                        "{} {} ({}/{}) - tmdb{}",
+                        status_str, c.name, c.owned_count, c.total_in_collection, c.id
+                    );
+                    for movie in &c.movies {
+                        let year_str = movie.year.map(|y| format!("({})", y)).unwrap_or_default();
+                        let disk_status = if movie.online { "online" } else { "offline" };
+                        if let Some(ref path) = movie.path {
+                            println!(
+                                "  - {} {} [{}:{}] {}",
+                                movie.title, year_str, movie.disk, disk_status, path
+                            );
+                        } else {
+                            println!(
+                                "  - {} {} [{}:{}]",
+                                movie.title, year_str, movie.disk, disk_status
+                            );
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+        _ => {
+            // Table format (default)
+            if collections.is_empty() {
+                println!("{}", "No collections found.".yellow());
+            } else {
+                let complete_count = collections.iter().filter(|c| c.status == "Complete").count();
+                let incomplete_count = collections.iter().filter(|c| c.status == "Incomplete").count();
+                let unknown_count = collections.iter().filter(|c| c.status == "Unknown").count();
+
+                println!("{}", "Movie Collections".bold().cyan());
+                println!("{}", "=".repeat(60));
+                println!(
+                    "Total: {} | Complete: {} | Incomplete: {} | Unknown: {}",
+                    collections.len().to_string().bold(),
+                    complete_count.to_string().green(),
+                    incomplete_count.to_string().yellow(),
+                    unknown_count.to_string().white()
+                );
+                println!();
+
+                for c in &collections {
+                    let status_badge = match c.status.as_str() {
+                        "Complete" => "[COMPLETE]".green(),
+                        "Incomplete" => "[INCOMPLETE]".yellow(),
+                        _ => "[UNKNOWN]".white(),
+                    };
+
+                    let progress = if c.total_in_collection > 0 {
+                        format!("{}/{}", c.owned_count, c.total_in_collection)
+                    } else {
+                        format!("{}", c.owned_count)
+                    };
+
+                    println!(
+                        "{} {} {} (tmdb{})",
+                        status_badge,
+                        c.name.bold(),
+                        progress,
+                        c.id
+                    );
+
+                    for movie in &c.movies {
+                        let year_str = movie.year.map(|y| format!("({})", y)).unwrap_or_default();
+                        let disk_status = if movie.online {
+                            "Online".green()
+                        } else {
+                            "Offline".red()
+                        };
+
+                        if let Some(ref path) = movie.path {
+                            println!(
+                                "    {} {} | {} {} | {}",
+                                movie.title, year_str, movie.disk.bold(), disk_status, path
+                            );
+                        } else {
+                            println!(
+                                "    {} {} | {} {}",
+                                movie.title, year_str, movie.disk.bold(), disk_status
+                            );
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
