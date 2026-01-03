@@ -581,6 +581,22 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
 /// 
 /// Returns (tmdb_id, imdb_id)
 pub fn extract_ids_from_path(path: &std::path::Path) -> (Option<u64>, Option<String>) {
+    extract_ids_from_path_starting_at(path, path)
+}
+
+/// Extract IMDB/TMDB IDs starting from a specific directory level.
+/// 
+/// This allows skipping certain directories (e.g., when a season directory has an invalid ID
+/// and we want to check the parent show directory instead).
+/// 
+/// - `file_path`: The original file path (for filename checking)
+/// - `start_dir`: The directory to start the parent walk from
+/// 
+/// Returns (tmdb_id, imdb_id)
+pub fn extract_ids_from_path_starting_at(
+    file_path: &std::path::Path,
+    start_dir: &std::path::Path,
+) -> (Option<u64>, Option<String>) {
     let mut tmdb_id: Option<u64> = None;
     let mut imdb_id: Option<String> = None;
     
@@ -591,22 +607,24 @@ pub fn extract_ids_from_path(path: &std::path::Path) -> (Option<u64>, Option<Str
     // e.g., "2004-[Title]-[Title]-tt0372183-2502" -> TMDB is 2502
     let legacy_format_re = regex::Regex::new(r"-tt(\d+)-(\d+)$").ok();
     
-    // Check filename first
-    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-        if let Some(ref re) = imdb_re {
-            if let Some(caps) = re.captures(filename) {
-                imdb_id = caps.get(1).map(|m| m.as_str().to_string());
+    // Check filename first (only if starting from the file's own path)
+    if file_path == start_dir {
+        if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
+            if let Some(ref re) = imdb_re {
+                if let Some(caps) = re.captures(filename) {
+                    imdb_id = caps.get(1).map(|m| m.as_str().to_string());
+                }
             }
-        }
-        if let Some(ref re) = tmdb_re {
-            if let Some(caps) = re.captures(filename) {
-                tmdb_id = caps.get(1).and_then(|m| m.as_str().parse().ok());
+            if let Some(ref re) = tmdb_re {
+                if let Some(caps) = re.captures(filename) {
+                    tmdb_id = caps.get(1).and_then(|m| m.as_str().parse().ok());
+                }
             }
         }
     }
     
-    // Check parent directories (walk up the path)
-    let mut current = path.parent();
+    // Check parent directories (walk up the path from start_dir)
+    let mut current = start_dir.parent();
     while let Some(dir) = current {
         if let Some(dirname) = dir.file_name().and_then(|n| n.to_str()) {
             // Check for IMDB ID

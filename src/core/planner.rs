@@ -498,6 +498,8 @@ impl Planner {
                 }
             } else if media_type == MediaType::TvShows {
                 // For TV shows, try direct lookup using IMDB ID or TMDB ID from path
+                // Strategy: If the current directory's IMDB ID fails (e.g., season-specific ID),
+                // try looking up parent directories for the show's main ID
                 let resolved_tmdb_id = if let Some(tmdb_id) = path_tmdb_id {
                     Some(tmdb_id)
                 } else if let Some(ref imdb_id) = path_imdb_id {
@@ -513,7 +515,11 @@ impl Planner {
                             }
                             Ok(None) => {
                                 tracing::warn!("[PATH-ID] No TV show found for IMDB ID: {}", imdb_id);
-                                None
+                                // SOLUTION B: If IMDB ID lookup failed, try parent directory
+                                // This handles cases where season directories have their own IMDB IDs
+                                // that are not recognized by TMDB (e.g., S02.tt13660696 for Slow Horses S2)
+                                // We should look up the parent directory for the show's main ID
+                                self.try_parent_directory_id_lookup(&video.path, imdb_id, client).await
                             }
                             Err(e) => {
                                 tracing::warn!("[PATH-ID] Failed to lookup IMDB ID {}: {}", imdb_id, e);
@@ -2690,6 +2696,69 @@ impl Planner {
         }
 
         Ok(None)
+    }
+
+    /// Try to find a TV show TMDB ID by looking at parent directories.
+    /// 
+    /// This is used when the current directory's IMDB ID is not found in TMDB.
+    /// For example, season-specific IMDB IDs (tt13660696 for Slow Horses S2) are not 
+    /// recognized by TMDB's find API, but the parent directory might have the show's
+    /// main IMDB ID (tt5875444 for Slow Horses).
+    /// 
+    /// Returns Some(tmdb_id) if found, None otherwise.
+    async fn try_parent_directory_id_lookup(
+        &self,
+        file_path: &std::path::Path,
+        failed_imdb_id: &str,
+        client: &TmdbClient,
+    ) -> Option<u64> {
+        // Get the parent directory of the file
+        let parent_dir = file_path.parent()?;
+        
+        // Look for IDs starting from the parent's parent (skip the current season directory)
+        // e.g., for /L_流人/S02.tt13660696/file.mp4, we want to look at /L_流人/
+        let (parent_tmdb_id, parent_imdb_id) = metadata::extract_ids_from_path_starting_at(
+            file_path,
+            parent_dir,  // Start from parent of parent (skip season dir)
+        );
+        
+        // If we found a TMDB ID directly, use it
+        if let Some(tmdb_id) = parent_tmdb_id {
+            tracing::info!(
+                "[PARENT-ID] Found TMDB ID {} in parent directory (after {} failed)",
+                tmdb_id, failed_imdb_id
+            );
+            return Some(tmdb_id);
+        }
+        
+        // If we found a different IMDB ID, try to resolve it
+        if let Some(ref imdb_id) = parent_imdb_id {
+            if imdb_id != failed_imdb_id {
+                match client.find_tv_by_imdb_id(imdb_id).await {
+                    Ok(Some(tmdb_id)) => {
+                        tracing::info!(
+                            "[PARENT-ID] Resolved parent IMDB {} -> TMDB {} (after {} failed)",
+                            imdb_id, tmdb_id, failed_imdb_id
+                        );
+                        return Some(tmdb_id);
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            "[PARENT-ID] Parent IMDB {} also not found in TMDB",
+                            imdb_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            "[PARENT-ID] Failed to lookup parent IMDB {}: {}",
+                            imdb_id, e
+                        );
+                    }
+                }
+            }
+        }
+        
+        None
     }
 
     /// Query TMDB for movie metadata (convenience wrapper without IMDB ID).
