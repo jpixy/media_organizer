@@ -576,6 +576,20 @@ fn regex_match_special(s: &str) -> Option<(Option<u16>, Option<u16>)> {
         }
     }
     
+    // Match [sp] or [SP] pattern - common in fan-sub releases
+    // e.g., "[EX8][2007](Galileo Season1)[sp][BDRIP]..."
+    if regex::Regex::new(r"(?i)\[sp\]").map(|re| re.is_match(s)).unwrap_or(false) {
+        tracing::debug!("Detected [sp] special pattern in: {}", s);
+        return Some((Some(0), Some(1))); // Season 0, Episode 1 for specials
+    }
+    
+    // Match .sp. or _sp_ or -sp- pattern
+    // e.g., "Show.SP.1080p" or "Show_sp_WEB"
+    if regex::Regex::new(r"(?i)[\.\s_-]sp[\.\s_-]").map(|re| re.is_match(s)).unwrap_or(false) {
+        tracing::debug!("Detected .sp. special pattern in: {}", s);
+        return Some((Some(0), Some(1)));
+    }
+    
     None
 }
 

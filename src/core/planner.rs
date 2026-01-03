@@ -1925,6 +1925,24 @@ impl Planner {
                 .unwrap_or(false) {
                 return true;
             }
+            // Skip per-episode folders: "NIGEHAJI.E05.720p", "Show.S01E01.WEB"
+            // These contain episode numbers and are NOT show titles
+            if regex::Regex::new(r"(?i)[\.\s_-]s\d{1,2}e\d{1,3}[\.\s_-]")
+                .map(|re| re.is_match(name))
+                .unwrap_or(false) {
+                return true;
+            }
+            if regex::Regex::new(r"(?i)[\.\s_-]e\d{1,3}[\.\s_-]")
+                .map(|re| re.is_match(name))
+                .unwrap_or(false) {
+                return true;
+            }
+            // Also match at start/end: "E01.720p" or "Show.E05"
+            if regex::Regex::new(r"(?i)^e\d{1,3}[\.\s_-]|[\.\s_-]e\d{1,3}$")
+                .map(|re| re.is_match(name))
+                .unwrap_or(false) {
+                return true;
+            }
             false
         };
 
@@ -2422,6 +2440,29 @@ impl Planner {
             return true;
         }
         if regex::Regex::new(r"^第\d{1,2}季$")
+            .map(|re| re.is_match(name))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        
+        // Episode folder patterns: folders containing SxxExx or Exx are per-episode folders
+        // e.g., "NIGEHAJI.E05.720p.FIX字幕侠", "Show.S01E01.720p", "E01.1080p"
+        // These are NOT show titles, skip them to find the actual show name
+        if regex::Regex::new(r"(?i)[\.\s_-]s\d{1,2}e\d{1,3}[\.\s_-]")
+            .map(|re| re.is_match(name))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if regex::Regex::new(r"(?i)[\.\s_-]e\d{1,3}[\.\s_-]")
+            .map(|re| re.is_match(name))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        // Also match at start/end: "E01.720p" or "Show.E05"
+        if regex::Regex::new(r"(?i)^e\d{1,3}[\.\s_-]|[\.\s_-]e\d{1,3}$")
             .map(|re| re.is_match(name))
             .unwrap_or(false)
         {
@@ -3214,7 +3255,31 @@ impl Planner {
             }
             // Query is contained in result name
             else if name_lower.contains(&query_lower) || orig_lower.contains(&query_lower) {
+                // Base score for contains match
                 score += 100;
+                
+                // IMPROVED: Prioritize results whose title length is close to query length
+                // This helps "流人" (query) match "流人" (result) better than "千古风流人物" (result)
+                // If result name length is within 2 chars of query, it's likely an exact or near-exact match
+                let query_len = query.chars().count();
+                let name_len = show.name.chars().count();
+                let len_diff = (name_len as i32 - query_len as i32).abs();
+                
+                if len_diff <= 2 {
+                    // Near-exact length match - boost significantly
+                    score += 800; // Total: 900, just below exact match
+                    tracing::debug!(
+                        "Near-exact length match: '{}' (len {}) vs query '{}' (len {})",
+                        show.name, name_len, query, query_len
+                    );
+                } else if len_diff <= 5 {
+                    // Reasonably close length - moderate boost
+                    score += 300; // Total: 400
+                }
+                // Long names containing query get penalized (they might be partial matches)
+                else {
+                    score -= (len_diff - 5) * 20; // Penalize very long names
+                }
             }
             // Check character overlap
             else {
