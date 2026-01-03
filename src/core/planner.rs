@@ -2005,7 +2005,27 @@ impl Planner {
             && !clean_parent.starts_with(".")
             && clean_parent.len() > 3;
         
-        if filename_seems_minimal && parent_has_title {
+        // NEW: Check if parent has CJK characters but filename is mostly Latin
+        // This handles cases like "逃避虽可耻但有用/NIGEHAJI.E01.720p.FIX字幕侠/..."
+        // where the parent dir has the proper CJK title but filename uses romanized name
+        let parent_has_cjk = clean_parent.chars().any(|c| {
+            matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3040}'..='\u{30ff}' | '\u{ac00}'..='\u{d7af}')
+        });
+        
+        // Count meaningful CJK characters in filename (excluding common ones like 字幕侠)
+        let filename_cjk_count = video.filename.chars()
+            .filter(|c| matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3040}'..='\u{30ff}' | '\u{ac00}'..='\u{d7af}'))
+            .count();
+        
+        // If parent has CJK title but filename is romanized (few CJK chars), use parent context
+        // This is important for shows like NIGEHAJI (逃げ恥) where filename uses romanized name
+        let filename_is_romanized = filename_cjk_count < 5 && 
+            video.filename.chars().take(20).filter(|c| c.is_ascii_alphabetic()).count() >= 5;
+        
+        let needs_parent_context = filename_seems_minimal || 
+            (parent_has_cjk && filename_is_romanized && parent_has_title);
+        
+        if needs_parent_context && parent_has_title {
             // Combine parent dir name and filename for better context
             tracing::info!(
                 "Using parent dir for context: '{}' + '{}' (depth: {})",
