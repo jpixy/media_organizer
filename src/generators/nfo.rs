@@ -130,6 +130,10 @@ pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
         if let Some(ref overview) = movie.collection_overview {
             nfo.push_str(&format!("    <overview>{}</overview>\n", escape_xml(overview)));
         }
+        // Total movies in collection (for collection completeness tracking)
+        if let Some(total) = movie.collection_total_movies {
+            nfo.push_str(&format!("    <totalmovies>{}</totalmovies>\n", total));
+        }
         nfo.push_str("  </set>\n");
     }
     

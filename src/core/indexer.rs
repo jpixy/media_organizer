@@ -351,6 +351,16 @@ fn parse_movie_nfo(
         get_tag("set").filter(|s| !s.contains('<') && !s.is_empty())
     });
     
+    // Collection total movies (from <set><totalmovies>N</totalmovies></set>)
+    let collection_total_movies = {
+        let pattern = r"(?s)<set>.*?<totalmovies>(\d+)</totalmovies>";
+        regex::Regex::new(pattern)
+            .ok()
+            .and_then(|re| re.captures(content))
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().trim().parse().ok())
+    };
+    
     // Country
     let country = get_tag("country").map(|c| {
         // Convert full country name to code if needed
@@ -391,6 +401,7 @@ fn parse_movie_nfo(
         imdb_id,
         collection_id,
         collection_name,
+        collection_total_movies,
         country,
         genres,
         actors,

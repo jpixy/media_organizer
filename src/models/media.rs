@@ -120,6 +120,8 @@ pub struct MovieMetadata {
     pub collection_name: Option<String>,
     /// Collection/Set overview.
     pub collection_overview: Option<String>,
+    /// Total number of movies in the collection.
+    pub collection_total_movies: Option<usize>,
 }
 
 /// TMDB metadata for a TV show.

@@ -29,7 +29,10 @@ pub async fn execute_index(action: IndexAction) -> Result<()> {
         IndexAction::Duplicates { media_type, format } => {
             find_duplicates(&media_type, &format).await
         }
-        IndexAction::Collections { filter, format, paths } => {
+        IndexAction::Collections { filter, format, paths, update } => {
+            if update {
+                update_collections().await?;
+            }
             list_collections(&filter, &format, paths).await
         }
     }
@@ -119,7 +122,9 @@ async fn scan_directory(
 
 /// Show collection statistics.
 async fn show_stats() -> Result<()> {
-    let index = indexer::load_central_index()?;
+    let mut index = indexer::load_central_index()?;
+    // Ensure statistics are up-to-date (in case collection info was updated)
+    index.update_statistics();
 
     println!("{}", "Media Collection Statistics".bold().cyan());
     println!("{}", "=".repeat(50));
@@ -586,6 +591,166 @@ async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Update collection totals from TMDB API and write back to NFO files.
+async fn update_collections() -> Result<()> {
+    use crate::services::tmdb::{TmdbClient, TmdbConfig};
+    use std::path::PathBuf;
+    
+    println!("{}", "[UPDATE] Fetching collection details from TMDB...".bold().cyan());
+    
+    let mut index = indexer::load_central_index()?;
+    
+    // Find collections that need updating (total_in_collection == 0)
+    let collections_to_update: Vec<u64> = index
+        .collections
+        .values()
+        .filter(|c| c.total_in_collection == 0 && c.owned_count > 0)
+        .map(|c| c.id)
+        .collect();
+    
+    if collections_to_update.is_empty() {
+        println!("  All collections already have complete info.");
+        return Ok(());
+    }
+    
+    println!("  Found {} collections to update", collections_to_update.len());
+    
+    // Initialize TMDB client
+    let tmdb_config = TmdbConfig::from_env()?;
+    let tmdb_client = TmdbClient::new(tmdb_config);
+    
+    // Track which NFO files need updating (disk -> relative_path -> total_movies)
+    let mut nfo_updates: std::collections::HashMap<(String, String), usize> = std::collections::HashMap::new();
+    
+    let pb = ProgressBar::new(collections_to_update.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=> ")
+    );
+    
+    for collection_id in &collections_to_update {
+        pb.set_message(format!("Collection {}", collection_id));
+        
+        match tmdb_client.get_collection_details(*collection_id).await {
+            Ok(details) => {
+                let total = details.parts.len();
+                
+                // Update the collection in index
+                if let Some(collection) = index.collections.get_mut(collection_id) {
+                    collection.total_in_collection = total;
+                    
+                    // Track NFO files that need updating
+                    for movie in &collection.movies {
+                        if movie.owned {
+                            if let Some(ref disk) = movie.disk {
+                                // Find the movie entry to get the relative path
+                                if let Some(movie_entry) = index.movies.iter().find(|m| {
+                                    m.tmdb_id == Some(movie.tmdb_id) && m.disk == *disk
+                                }) {
+                                    nfo_updates.insert(
+                                        (disk.clone(), movie_entry.relative_path.clone()),
+                                        total
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                tracing::debug!(
+                    "[COLLECTION] Updated {} (tmdb{}): {} movies",
+                    details.name, collection_id, total
+                );
+            }
+            Err(e) => {
+                tracing::warn!("[COLLECTION] Failed to fetch {}: {}", collection_id, e);
+            }
+        }
+        
+        pb.inc(1);
+        
+        // Rate limiting: small delay between API calls
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    
+    pb.finish_with_message("Done fetching from TMDB");
+    
+    // Update NFO files
+    if !nfo_updates.is_empty() {
+        println!("{}", format!("[UPDATE] Writing to {} NFO files...", nfo_updates.len()).cyan());
+        
+        for ((disk_label, relative_path), total_movies) in &nfo_updates {
+            // Find the disk base path
+            if let Some(disk_info) = index.disks.get(disk_label) {
+                let nfo_path = PathBuf::from(&disk_info.base_path)
+                    .join(relative_path)
+                    .join("movie.nfo");
+                
+                if nfo_path.exists() {
+                    match update_nfo_with_totalmovies(&nfo_path, *total_movies) {
+                        Ok(_) => {
+                            tracing::debug!("[NFO] Updated: {}", nfo_path.display());
+                        }
+                        Err(e) => {
+                            tracing::warn!("[NFO] Failed to update {}: {}", nfo_path.display(), e);
+                        }
+                    }
+                } else {
+                    tracing::debug!("[NFO] File not found (disk offline?): {}", nfo_path.display());
+                }
+            }
+        }
+    }
+    
+    // Also update the movie entries with collection_total_movies
+    for movie in &mut index.movies {
+        if let Some(collection_id) = movie.collection_id {
+            if let Some(collection) = index.collections.get(&collection_id) {
+                if collection.total_in_collection > 0 {
+                    movie.collection_total_movies = Some(collection.total_in_collection);
+                }
+            }
+        }
+    }
+    
+    // Save updated index
+    index.update_statistics();
+    indexer::save_central_index(&index)?;
+    
+    println!("{}", "[OK] Collection info updated".bold().green());
+    
+    Ok(())
+}
+
+/// Update an NFO file to include <totalmovies> tag within <set>.
+fn update_nfo_with_totalmovies(nfo_path: &std::path::Path, total_movies: usize) -> Result<()> {
+    use std::fs;
+    
+    let content = fs::read_to_string(nfo_path)?;
+    
+    // Check if <totalmovies> already exists
+    if content.contains("<totalmovies>") {
+        // Update existing value
+        let re = regex::Regex::new(r"<totalmovies>\d+</totalmovies>")?;
+        let updated = re.replace(&content, format!("<totalmovies>{}</totalmovies>", total_movies));
+        fs::write(nfo_path, updated.as_ref())?;
+    } else if content.contains("</set>") {
+        // Add <totalmovies> before </set>
+        let updated = content.replace(
+            "</set>",
+            &format!("    <totalmovies>{}</totalmovies>\n  </set>", total_movies)
+        );
+        fs::write(nfo_path, updated)?;
+    } else {
+        // No <set> tag found, skip
+        tracing::debug!("[NFO] No <set> tag found in {}", nfo_path.display());
+    }
+    
     Ok(())
 }
 

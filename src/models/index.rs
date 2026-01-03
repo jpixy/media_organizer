@@ -86,6 +86,8 @@ pub struct MovieEntry {
     pub collection_id: Option<u64>,
     /// Collection name
     pub collection_name: Option<String>,
+    /// Total movies in the collection (for completeness tracking)
+    pub collection_total_movies: Option<usize>,
     /// Country code (e.g., "US", "CN")
     pub country: Option<String>,
     /// Genres
@@ -365,10 +367,18 @@ impl CentralIndex {
                         name: movie.collection_name.clone().unwrap_or_else(|| "Unknown Collection".to_string()),
                         poster_url: None,
                         movies: Vec::new(),
-                        total_in_collection: 0, // We don't know the total without TMDB API
+                        total_in_collection: 0, // Will be updated from NFO if available
                         owned_count: 0,
                     }
                 });
+                
+                // Update total_in_collection from NFO data if available and not already set
+                if let Some(total) = movie.collection_total_movies {
+                    // Use the maximum value seen (in case different NFOs have different info)
+                    if total > collection.total_in_collection {
+                        collection.total_in_collection = total;
+                    }
+                }
                 
                 // Add movie to collection if not already present
                 let already_in_collection = collection.movies.iter().any(|m| m.tmdb_id == movie.tmdb_id.unwrap_or(0));
@@ -456,16 +466,30 @@ impl CentralIndex {
         }
         
         // Collections
-        // Note: Without TMDB API access during indexing, we don't know total_in_collection.
-        // So we report collections where we have multiple movies as "potentially complete"
-        // and single-movie collections as "incomplete" (likely missing other movies).
+        // Use total_in_collection from TMDB if available, otherwise use heuristics.
         self.statistics.complete_collections = self.collections
             .values()
-            .filter(|c| c.owned_count >= 2) // If we have 2+ movies, it's a real collection
+            .filter(|c| {
+                if c.total_in_collection > 0 {
+                    // If we know the total, check if we have all movies
+                    c.owned_count >= c.total_in_collection
+                } else {
+                    // Fallback heuristic: 2+ movies means likely complete
+                    c.owned_count >= 2
+                }
+            })
             .count();
         self.statistics.incomplete_collections = self.collections
             .values()
-            .filter(|c| c.owned_count == 1) // Single movie in collection = likely incomplete
+            .filter(|c| {
+                if c.total_in_collection > 0 {
+                    // If we know the total, check if we're missing some
+                    c.owned_count > 0 && c.owned_count < c.total_in_collection
+                } else {
+                    // Fallback: single movie = likely incomplete
+                    c.owned_count == 1
+                }
+            })
             .count();
     }
     

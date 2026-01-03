@@ -1019,8 +1019,27 @@ impl Planner {
                 let details = tmdb.get_movie_details(tmdb_id).await?;
                 let credits = tmdb.get_movie_credits(tmdb_id).await.ok();
                 
+                // Fetch collection details if movie belongs to a collection
+                let collection_total = if let Some(ref collection) = details.belongs_to_collection {
+                    match tmdb.get_collection_details(collection.id).await {
+                        Ok(collection_details) => {
+                            tracing::debug!(
+                                "[COLLECTION] Fetched {} (tmdb{}): {} movies total",
+                                collection.name, collection.id, collection_details.parts.len()
+                            );
+                            Some(collection_details.parts.len())
+                        }
+                        Err(e) => {
+                            tracing::warn!("[COLLECTION] Failed to fetch collection {}: {}", collection.id, e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                
                 // Build movie metadata
-                let metadata = self.build_movie_metadata_from_details(&details, credits.as_ref());
+                let metadata = self.build_movie_metadata_from_details(&details, credits.as_ref(), collection_total);
                 
                 let parsed = ParsedFilename {
                     original_title: info.original_title,
@@ -1087,10 +1106,15 @@ impl Planner {
     }
     
     /// Build MovieMetadata from TMDB MovieDetails (used for organized files).
+    /// 
+    /// The `collection_total_movies` parameter is optional and represents the total number
+    /// of movies in the collection (franchise series). If provided, it will be included
+    /// in the metadata for NFO generation.
     fn build_movie_metadata_from_details(
         &self,
         details: &MovieDetails,
         credits: Option<&Credits>,
+        collection_total_movies: Option<usize>,
     ) -> MovieMetadata {
         // Extract actor names and roles
         let (actors, actor_roles): (Vec<String>, Vec<String>) = credits
@@ -1208,6 +1232,7 @@ impl Planner {
             collection_id: details.belongs_to_collection.as_ref().map(|c| c.id),
             collection_name: details.belongs_to_collection.as_ref().map(|c| c.name.clone()),
             collection_overview: details.belongs_to_collection.as_ref().and_then(|c| c.overview.clone()),
+            collection_total_movies,
         }
     }
     
@@ -3559,15 +3584,30 @@ impl Planner {
         });
 
         // Extract collection info (for movie series like "Pirates of the Caribbean")
-        let (collection_id, collection_name, collection_overview) = 
+        let (collection_id, collection_name, collection_overview, collection_total_movies) = 
             if let Some(ref collection) = details.belongs_to_collection {
+                // Fetch collection details to get total movies count
+                let total = match client.get_collection_details(collection.id).await {
+                    Ok(collection_details) => {
+                        tracing::debug!(
+                            "[COLLECTION] Fetched {} (tmdb{}): {} movies total",
+                            collection.name, collection.id, collection_details.parts.len()
+                        );
+                        Some(collection_details.parts.len())
+                    }
+                    Err(e) => {
+                        tracing::warn!("[COLLECTION] Failed to fetch collection {}: {}", collection.id, e);
+                        None
+                    }
+                };
                 (
                     Some(collection.id),
                     Some(collection.name.clone()),
                     collection.overview.clone(),
+                    total,
                 )
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
         Ok(Some(MovieMetadata {
@@ -3597,6 +3637,7 @@ impl Planner {
             collection_id,
             collection_name,
             collection_overview,
+            collection_total_movies,
         }))
     }
 

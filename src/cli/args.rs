@@ -244,6 +244,10 @@ pub enum IndexAction {
         /// Show movie paths
         #[arg(long)]
         paths: bool,
+
+        /// Update collection totals from TMDB and write back to NFO files
+        #[arg(long)]
+        update: bool,
     },
 }
 

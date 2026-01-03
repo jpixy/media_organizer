@@ -96,6 +96,28 @@ pub struct MovieCollection {
     pub backdrop_path: Option<String>,
 }
 
+/// Collection details (full info including all movies).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CollectionDetails {
+    pub id: u64,
+    pub name: String,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
+    /// All movies in this collection
+    pub parts: Vec<CollectionPart>,
+}
+
+/// A movie that is part of a collection.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CollectionPart {
+    pub id: u64,
+    pub title: String,
+    pub original_title: String,
+    pub release_date: Option<String>,
+    pub poster_path: Option<String>,
+}
+
 /// Release dates container.
 #[derive(Debug, Deserialize)]
 pub struct ReleaseDates {
@@ -396,6 +418,18 @@ impl TmdbClient {
         let url = self.build_url(
             &format!("movie/{}", movie_id),
             "&append_to_response=credits,release_dates"
+        );
+        let resp = self.build_request(&url).send().await?.json().await?;
+        Ok(resp)
+    }
+
+    /// Get collection details (all movies in a franchise).
+    /// 
+    /// Returns the full collection info including the list of all movies (parts).
+    pub async fn get_collection_details(&self, collection_id: u64) -> Result<CollectionDetails> {
+        let url = self.build_url(
+            &format!("collection/{}", collection_id),
+            ""
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
