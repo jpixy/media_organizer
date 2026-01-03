@@ -203,6 +203,7 @@ impl Planner {
 
         // Caches
         let mut tvshow_cache: HashMap<PathBuf, TvShowMetadata> = HashMap::new();
+        let mut movie_cache: HashMap<PathBuf, MovieMetadata> = HashMap::new();
         let season_episodes_cache: SeasonEpisodesCache = Arc::new(RwLock::new(HashMap::new()));
 
         // Step 2: Run ffprobe in parallel for all videos (up to 8 concurrent)
@@ -251,41 +252,70 @@ impl Planner {
                             tvshow_cache.insert(top_dir.clone(), meta.clone());
                         }
                     }
+                    // Cache the movie metadata for same-directory siblings
+                    if media_type == MediaType::Movies {
+                        if let Some(ref meta) = item.movie_metadata {
+                            movie_cache.insert(top_dir.clone(), meta.clone());
+                        }
+                    }
                     items.push(item);
                     pb.inc(1);
 
                     // Process remaining files using cached metadata
-                    let cached = tvshow_cache.get(top_dir).cloned();
+                    let cached_show = tvshow_cache.get(top_dir).cloned();
+                    let cached_movie = movie_cache.get(top_dir).cloned();
                     for video in group_videos.iter().skip(1) {
                         pb.set_message(format!("Processing: {}", &video.filename));
                         
-                        match self.process_single_video_optimized(
-                            video,
-                            target,
-                            media_type,
-                            cached.as_ref(),
-                            &season_episodes_cache,
-                            ffprobe_map.get(&video.path),
-                        ).await {
-                            Ok(Some((item, _))) => {
-                                items.push(item);
+                        // For movies with cached metadata, use the cached match
+                        if media_type == MediaType::Movies && cached_movie.is_some() {
+                            match self.process_sibling_movie(
+                                video,
+                                target,
+                                cached_movie.as_ref().unwrap(),
+                                ffprobe_map.get(&video.path),
+                            ).await {
+                                Ok(item) => {
+                                    items.push(item);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to process sibling movie {}: {}", video.filename, e);
+                                    unknown.push(UnknownItem {
+                                        source: video.clone(),
+                                        reason: e.to_string(),
+                                    });
+                                }
                             }
-                            Ok(None) => {
-                                let reason = match media_type {
-                                    MediaType::Movies => "Failed to find TMDB match",
-                                    MediaType::TvShows => "Failed to extract episode info",
-                                };
-                                unknown.push(UnknownItem {
-                                    source: video.clone(),
-                                    reason: reason.to_string(),
-                                });
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to process {}: {}", video.filename, e);
-                                unknown.push(UnknownItem {
-                                    source: video.clone(),
-                                    reason: e.to_string(),
-                                });
+                        } else {
+                            // For TV shows, use the existing logic
+                            match self.process_single_video_optimized(
+                                video,
+                                target,
+                                media_type,
+                                cached_show.as_ref(),
+                                &season_episodes_cache,
+                                ffprobe_map.get(&video.path),
+                            ).await {
+                                Ok(Some((item, _))) => {
+                                    items.push(item);
+                                }
+                                Ok(None) => {
+                                    let reason = match media_type {
+                                        MediaType::Movies => "Failed to find TMDB match",
+                                        MediaType::TvShows => "Failed to extract episode info",
+                                    };
+                                    unknown.push(UnknownItem {
+                                        source: video.clone(),
+                                        reason: reason.to_string(),
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to process {}: {}", video.filename, e);
+                                    unknown.push(UnknownItem {
+                                        source: video.clone(),
+                                        reason: e.to_string(),
+                                    });
+                                }
                             }
                         }
                         pb.inc(1);
@@ -3136,6 +3166,70 @@ impl Planner {
             collection_name,
             collection_overview,
         }))
+    }
+
+    /// Process a sibling movie file using already-matched metadata from the same directory.
+    /// 
+    /// When multiple video files exist in the same directory (e.g., different resolutions),
+    /// this function uses the cached movie metadata from the first matched file.
+    async fn process_sibling_movie(
+        &self,
+        video: &VideoFile,
+        target: &Path,
+        cached_movie: &MovieMetadata,
+        precomputed_ffprobe: Option<&VideoMetadata>,
+    ) -> Result<PlanItem> {
+        tracing::debug!(
+            "[SIBLING] Using cached metadata for: {} -> {}",
+            video.filename,
+            cached_movie.title
+        );
+
+        // Get video metadata
+        let video_metadata = match precomputed_ffprobe {
+            Some(meta) => meta.clone(),
+            None => ffprobe::parse_metadata_from_filename(&video.filename),
+        };
+
+        // Create a dummy parsed filename (we don't need AI parsing since we have cached metadata)
+        let parsed = ParsedFilename {
+            title: Some(cached_movie.title.clone()),
+            original_title: Some(cached_movie.original_title.clone()),
+            year: Some(cached_movie.year),
+            confidence: 1.0,
+            raw_response: Some("sibling_movie_cached".to_string()),
+            ..Default::default()
+        };
+
+        // Generate target info using the cached movie metadata
+        let (target_info, operations) = self.generate_target_info(
+            video,
+            &Some(cached_movie.clone()),
+            &None,
+            &parsed,
+            &video_metadata,
+            target,
+            MediaType::Movies,
+        )?.ok_or_else(|| crate::Error::other("Failed to generate target info for sibling movie"))?;
+
+        Ok(PlanItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            status: PlanItemStatus::Pending,
+            source: video.clone(),
+            parsed: ParsedInfo {
+                title: parsed.title,
+                original_title: parsed.original_title,
+                year: parsed.year,
+                confidence: 1.0,
+                raw_response: parsed.raw_response,
+            },
+            movie_metadata: Some(cached_movie.clone()),
+            tvshow_metadata: None,
+            episode_metadata: None,
+            video_metadata,
+            target: target_info,
+            operations,
+        })
     }
 
     /// Generate target path information and operations.
