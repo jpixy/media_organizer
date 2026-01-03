@@ -1784,31 +1784,34 @@ impl Planner {
     /// 
     /// If the file is in a subdirectory with a meaningful name, include it for better context.
     /// This function now uses intelligent parent directory lookup to skip meaningless
-    /// subdirectories like "4K", "S01", "WEB-DL" etc.
+    /// subdirectories like "4K", "S01", "WEB-DL" etc., and removes sorting prefixes.
     fn build_parse_input(&self, video: &VideoFile) -> String {
         // Use intelligent parent lookup to skip meaningless directories
         let (parent_name, depth) = Self::find_meaningful_parent_name(video);
+        
+        // Strip sorting prefix from parent name (A_, X_, 01_, etc.)
+        let clean_parent = Self::strip_sorting_prefix(&parent_name);
         
         // Check if filename lacks meaningful title info
         // (e.g., just year + format like "2024 SP.mp4" or "E01.mkv")
         let filename_seems_minimal = self.is_minimal_filename(&video.filename);
         
-        // Check if parent directory has meaningful name
-        let parent_has_title = !parent_name.is_empty() 
-            && parent_name != "Movies" 
-            && parent_name != "movies"
-            && parent_name != "TvShows"
-            && parent_name != "tvshows"
-            && !parent_name.starts_with(".")
-            && parent_name.len() > 3;
+        // Check if parent directory has meaningful name (after stripping prefix)
+        let parent_has_title = !clean_parent.is_empty() 
+            && clean_parent != "Movies" 
+            && clean_parent != "movies"
+            && clean_parent != "TvShows"
+            && clean_parent != "tvshows"
+            && !clean_parent.starts_with(".")
+            && clean_parent.len() > 3;
         
         if filename_seems_minimal && parent_has_title {
             // Combine parent dir name and filename for better context
             tracing::info!(
                 "Using parent dir for context: '{}' + '{}' (depth: {})",
-                parent_name, video.filename, depth
+                clean_parent, video.filename, depth
             );
-            format!("{} - {}", parent_name, video.filename)
+            format!("{} - {}", clean_parent, video.filename)
         } else {
             video.filename.clone()
         }
@@ -2162,6 +2165,50 @@ impl Planner {
         }
         
         false
+    }
+
+    /// Strip sorting prefix from a directory or file name.
+    /// 
+    /// Common sorting prefix patterns:
+    /// - Single letter + separator: "A_剧名", "X-电影", "Z.标题"
+    /// - Number + separator: "01_剧名", "001-电影", "1.标题"
+    /// - These are used for alphabetical/numerical sorting in file managers
+    /// 
+    /// Examples:
+    /// - "X_许你耀眼" → "许你耀眼"
+    /// - "H_回魂计" → "回魂计"
+    /// - "01_电影名" → "电影名"
+    /// - "A-剧名" → "剧名"
+    /// - "1.标题" → "标题"
+    fn strip_sorting_prefix(name: &str) -> &str {
+        // Pattern 1: Single ASCII letter + separator (_, -, .)
+        // e.g., "A_剧名", "X-电影", "Z.标题"
+        if let Some(re) = regex::Regex::new(r"^[A-Za-z][_\-.]").ok() {
+            if re.is_match(name) && name.len() > 2 {
+                let stripped = &name[2..];
+                if !stripped.is_empty() {
+                    tracing::debug!("Stripped sorting prefix from '{}' -> '{}'", name, stripped);
+                    return stripped;
+                }
+            }
+        }
+        
+        // Pattern 2: Numbers + separator (_, -, .)
+        // e.g., "01_剧名", "001-电影", "1.标题"
+        if let Some(re) = regex::Regex::new(r"^(\d{1,3})[_\-.]").ok() {
+            if let Some(caps) = re.captures(name) {
+                let prefix_len = caps.get(0).map(|m| m.len()).unwrap_or(0);
+                if prefix_len > 0 && name.len() > prefix_len {
+                    let stripped = &name[prefix_len..];
+                    if !stripped.is_empty() {
+                        tracing::debug!("Stripped numeric sorting prefix from '{}' -> '{}'", name, stripped);
+                        return stripped;
+                    }
+                }
+            }
+        }
+        
+        name
     }
 
     /// Check if a directory name is "meaningless" for title extraction.
@@ -2740,10 +2787,11 @@ impl Planner {
                 
                 // Remove year and brackets, then split Chinese and English
                 let cleaned = year_re.replace_all(folder, "").to_string();
+                // Strip sorting prefix (A_, X_, 01_, etc.)
+                let cleaned = Self::strip_sorting_prefix(&cleaned);
+                // Replace separators with spaces for better parsing
                 let cleaned = cleaned
-                    .trim_start_matches("Z_")
-                    .trim_start_matches("z_")
-                    .replace(['.', '_'], " ")
+                    .replace(['.', '_', '-'], " ")
                     .trim()
                     .to_string();
                 
