@@ -8,6 +8,7 @@ A smart media file organizer that uses AI to parse filenames and fetch metadata 
 - **IMDB ID direct lookup** - Highest priority: directly fetches metadata using IMDB ID from filename (skips AI)
 - **TMDB metadata** - Auto-fetches movie details, posters, directors, actors, and collection info
 - **Smart renaming** - Renames files and folders in standardized format
+- **Subtitle support** - Automatically moves subtitle files (.srt, .ass, .ssa, .sub, .vtt) and folders (Subs/) with video
 - **Safe operations** - Generate plan first, preview, then execute with full rollback support
 - **GPU acceleration** - Supports NVIDIA GPU for accelerated AI inference
 - **Central indexing** - Build searchable index across multiple disks
@@ -336,6 +337,18 @@ The tool uses a smart priority system for metadata lookup:
 3. **AI parsing + title search** - Uses Ollama AI to parse filename, then searches TMDB by title
 
 This means files with IMDB IDs in their names (e.g., `Movie (2023) tt1234567.mkv`) can be matched even when title search fails.
+
+## Subtitle Handling
+
+When moving video files, the tool automatically detects and moves related subtitle files:
+
+**Supported subtitle folders:**
+- `Sub`, `Subs`, `Subtitle`, `Subtitles`, `字幕`
+
+**Supported subtitle files:**
+- `.srt`, `.ass`, `.ssa`, `.sub`, `.idx`, `.vtt`, `.sup`, `.smi`
+
+Subtitles are moved **without renaming** to preserve their original naming conventions.
 
 ## Troubleshooting
 

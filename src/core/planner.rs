@@ -3243,6 +3243,9 @@ impl Planner {
             content_ref: None,
         });
 
+        // Operation 2.5: Move subtitle files and folders (keep original names)
+        self.add_subtitle_operations(&video.parent_dir, &target_folder, &mut operations);
+
         // Operation 3: Create NFO file (for TV shows, only if not already exists)
         if self.config.generate_nfo {
             operations.push(Operation {
@@ -3297,6 +3300,86 @@ impl Planner {
         };
 
         Ok(Some((target_info, operations)))
+    }
+
+    /// Add operations to move subtitle files and folders.
+    /// 
+    /// Detects and moves:
+    /// - Subtitle folders: Sub, Subs, Subtitle, Subtitles, etc.
+    /// - Subtitle files: .srt, .ass, .ssa, .sub, .idx, .vtt, .sup
+    /// 
+    /// Files/folders are moved without renaming.
+    fn add_subtitle_operations(
+        &self,
+        source_dir: &Path,
+        target_folder: &Path,
+        operations: &mut Vec<Operation>,
+    ) {
+        // Subtitle folder names (case-insensitive)
+        const SUBTITLE_FOLDERS: &[&str] = &[
+            "sub", "subs", "subtitle", "subtitles", "字幕",
+        ];
+        
+        // Subtitle file extensions
+        const SUBTITLE_EXTENSIONS: &[&str] = &[
+            "srt", "ass", "ssa", "sub", "idx", "vtt", "sup", "smi",
+        ];
+
+        // Read source directory
+        let entries = match std::fs::read_dir(source_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::debug!("Could not read source dir for subtitles: {}", e);
+                return;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Check for subtitle folders
+            if path.is_dir() {
+                let name_lower = name.to_lowercase();
+                if SUBTITLE_FOLDERS.iter().any(|&f| name_lower == f) {
+                    let target_path = target_folder.join(name);
+                    tracing::debug!("Adding subtitle folder move: {} -> {}", 
+                        path.display(), target_path.display());
+                    
+                    operations.push(Operation {
+                        op: OperationType::Move,
+                        from: Some(path),
+                        to: target_path,
+                        url: None,
+                        content_ref: None,
+                    });
+                }
+            }
+            // Check for subtitle files
+            else if path.is_file() {
+                let ext = path.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                
+                if SUBTITLE_EXTENSIONS.iter().any(|&e| ext == e) {
+                    let target_path = target_folder.join(name);
+                    tracing::debug!("Adding subtitle file move: {} -> {}", 
+                        path.display(), target_path.display());
+                    
+                    operations.push(Operation {
+                        op: OperationType::Move,
+                        from: Some(path),
+                        to: target_path,
+                        url: None,
+                        content_ref: None,
+                    });
+                }
+            }
+        }
     }
 
     /// Process sample files.
