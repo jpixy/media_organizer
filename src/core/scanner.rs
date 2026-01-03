@@ -49,6 +49,60 @@ fn is_video_extension(ext: &str) -> bool {
     VIDEO_EXTENSIONS.contains(&ext_lower.as_str())
 }
 
+/// Check if a file is inside an "Extras" directory.
+/// 
+/// Extras directories contain behind-the-scenes content, deleted scenes, etc.
+/// These should not be processed as main movies.
+/// 
+/// Patterns matched (case-insensitive):
+/// - "Extras", "Extra"
+/// - "Featurettes", "Featurette"
+/// - "Behind the Scenes", "BehindTheScenes"
+/// - "Deleted Scenes", "DeletedScenes"
+/// - "Making of", "MakingOf"
+/// - "Bonus", "Bonuses"
+/// - "Special Features"
+/// - Directory names ending with "-Extras" or ".Extras" (e.g., "The.Bourne.Identity.Extras-Grym")
+fn is_in_extras_directory(path: &Path) -> bool {
+    // Check each component of the path
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component {
+            let name_str = name.to_string_lossy().to_lowercase();
+            
+            // Exact matches (case-insensitive)
+            let extras_names = [
+                "extras", "extra",
+                "featurettes", "featurette", 
+                "behind the scenes", "behindthescenes",
+                "deleted scenes", "deletedscenes",
+                "making of", "makingof",
+                "bonus", "bonuses",
+                "special features", "specialfeatures",
+            ];
+            
+            if extras_names.iter().any(|&n| name_str == n) {
+                return true;
+            }
+            
+            // Pattern: ends with ".extras" or "-extras" or "_extras"
+            // e.g., "The.Bourne.Identity.Extras-Grym"
+            if name_str.contains(".extras") || 
+               name_str.contains("-extras") || 
+               name_str.contains("_extras") {
+                return true;
+            }
+            
+            // Pattern: ends with ".featurettes" or similar
+            if name_str.contains(".featurette") || 
+               name_str.contains("-featurette") {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
 /// Check if a path component indicates a sample.
 /// Matches "sample", "samples", or paths containing "sample" folder.
 fn is_sample_path(path: &Path) -> bool {
@@ -139,6 +193,13 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
             all_dirs.insert(entry_path.to_path_buf());
         } else if entry.file_type().is_file() {
             result.total_files_scanned += 1;
+            
+            // Skip files in "Extras" directories - they will be moved as-is with the movie
+            // (handled separately in add_extras_operations, similar to subtitles)
+            if is_in_extras_directory(entry_path) {
+                tracing::debug!("Extras file (will be moved with movie): {}", entry_path.display());
+                continue;
+            }
 
             // Check if it's a video file
             if let Some(ext) = entry_path.extension() {

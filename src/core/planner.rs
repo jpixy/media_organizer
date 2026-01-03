@@ -3570,12 +3570,24 @@ impl Planner {
         const SUBTITLE_EXTENSIONS: &[&str] = &[
             "srt", "ass", "ssa", "sub", "idx", "vtt", "sup", "smi",
         ];
+        
+        // Extras folder patterns (case-insensitive)
+        // These contain behind-the-scenes, deleted scenes, featurettes, etc.
+        const EXTRAS_PATTERNS: &[&str] = &[
+            "extras", "extra",
+            "featurettes", "featurette",
+            "behind the scenes", "behindthescenes",
+            "deleted scenes", "deletedscenes", 
+            "making of", "makingof",
+            "bonus", "bonuses",
+            "special features", "specialfeatures",
+        ];
 
         // Read source directory
         let entries = match std::fs::read_dir(source_dir) {
             Ok(entries) => entries,
             Err(e) => {
-                tracing::debug!("Could not read source dir for subtitles: {}", e);
+                tracing::debug!("Could not read source dir for auxiliary files: {}", e);
                 return;
             }
         };
@@ -3586,13 +3598,37 @@ impl Planner {
                 Some(n) => n,
                 None => continue,
             };
+            let name_lower = name.to_lowercase();
 
-            // Check for subtitle folders
+            // Check for folders
             if path.is_dir() {
-                let name_lower = name.to_lowercase();
+                // Check for subtitle folders
                 if SUBTITLE_FOLDERS.iter().any(|&f| name_lower == f) {
                     let target_path = target_folder.join(name);
                     tracing::debug!("Adding subtitle folder move: {} -> {}", 
+                        path.display(), target_path.display());
+                    
+                    operations.push(Operation {
+                        op: OperationType::Move,
+                        from: Some(path),
+                        to: target_path,
+                        url: None,
+                        content_ref: None,
+                    });
+                    continue;
+                }
+                
+                // Check for extras folders (exact match or pattern match)
+                let is_extras = EXTRAS_PATTERNS.iter().any(|&p| name_lower == p)
+                    || name_lower.contains(".extras")
+                    || name_lower.contains("-extras")
+                    || name_lower.contains("_extras")
+                    || name_lower.contains(".featurette")
+                    || name_lower.contains("-featurette");
+                    
+                if is_extras {
+                    let target_path = target_folder.join(name);
+                    tracing::debug!("Adding extras folder move: {} -> {}", 
                         path.display(), target_path.display());
                     
                     operations.push(Operation {
