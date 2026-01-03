@@ -145,14 +145,18 @@ impl Planner {
         }
 
         // Step 2: Process videos (pass source for correct cache key calculation)
-        let (items, unknown) = self
+        let (mut items, unknown) = self
             .process_videos(&scan_result.videos, source, target, media_type)
             .await?;
 
         // Step 3: Process samples
         let samples = self.process_samples(&scan_result.samples, &items, target);
 
-        // Step 3.5: SAFETY CHECK - Detect duplicate target paths
+        // Step 3.5: Deduplicate operations across all items
+        // This handles cases where multiple videos share the same subtitles
+        self.deduplicate_operations(&mut items);
+
+        // Step 3.6: SAFETY CHECK - Detect duplicate target paths
         // This prevents data loss from files overwriting each other
         self.validate_no_duplicate_targets(&items)?;
 
@@ -1811,6 +1815,43 @@ impl Planner {
         Some(format!("{}_{}", code.to_uppercase(), name_no_spaces))
     }
 
+    /// Deduplicate operations across all items.
+    /// 
+    /// This handles cases where multiple videos in the same directory share subtitles.
+    /// When two items have the same source file being moved, keep only the first occurrence.
+    fn deduplicate_operations(&self, items: &mut [PlanItem]) {
+        use std::collections::HashSet;
+        
+        let mut seen_sources: HashSet<PathBuf> = HashSet::new();
+        let mut removed_count = 0;
+        
+        for item in items.iter_mut() {
+            let original_len = item.operations.len();
+            
+            item.operations.retain(|op| {
+                if matches!(op.op, OperationType::Move) {
+                    if let Some(ref source) = op.from {
+                        // If we've already seen this source file, skip it
+                        if seen_sources.contains(source) {
+                            return false;
+                        }
+                        seen_sources.insert(source.clone());
+                    }
+                }
+                true
+            });
+            
+            removed_count += original_len - item.operations.len();
+        }
+        
+        if removed_count > 0 {
+            tracing::info!(
+                "Deduplicated {} duplicate operations (shared subtitle files)",
+                removed_count
+            );
+        }
+    }
+
     /// SAFETY CHECK: Validate that no two items have the same target path.
     /// This prevents data loss from files overwriting each other.
     fn validate_no_duplicate_targets(&self, items: &[PlanItem]) -> Result<()> {
@@ -3309,6 +3350,7 @@ impl Planner {
     /// - Subtitle files: .srt, .ass, .ssa, .sub, .idx, .vtt, .sup
     /// 
     /// Files/folders are moved without renaming.
+    /// Note: Duplicates are handled by deduplicate_operations() at the plan level.
     fn add_subtitle_operations(
         &self,
         source_dir: &Path,
