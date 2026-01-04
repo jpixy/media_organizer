@@ -228,20 +228,22 @@ impl Planner {
         for (top_dir, group_videos) in &groups {
             let cached_show = tvshow_cache.get(top_dir).cloned();
 
-            let first_video = &group_videos[0];
+            // Select the best representative video for AI parsing
+            // Prioritizes standard SxxExx format, avoids Special files
+            let representative_video = Self::select_representative_video(group_videos);
             pb.set_message(format!("Processing: {} ({} files)", 
                 top_dir.file_name().unwrap_or_default().to_string_lossy(),
                 group_videos.len()
             ));
 
-            // For the first video, use AI parsing to get show metadata
+            // For the representative video, use AI parsing to get show metadata
             let first_result = self.process_single_video_optimized(
-                first_video,
+                representative_video,
                 target,
                 media_type,
                 cached_show.as_ref(),
                 &season_episodes_cache,
-                ffprobe_map.get(&first_video.path),
+                ffprobe_map.get(&representative_video.path),
             ).await;
 
             match first_result {
@@ -262,9 +264,10 @@ impl Planner {
                     pb.inc(1);
 
                     // Process remaining files using cached metadata
+                    // Skip the representative video (already processed above)
                     let cached_show = tvshow_cache.get(top_dir).cloned();
                     let cached_movie = movie_cache.get(top_dir).cloned();
-                    for video in group_videos.iter().skip(1) {
+                    for video in group_videos.iter().filter(|v| v.path != representative_video.path) {
                         pb.set_message(format!("Processing: {}", &video.filename));
                         
                         // For movies with cached metadata, use the cached match
@@ -1613,6 +1616,41 @@ impl Planner {
             air_date: None,
             overview: None,
         })
+    }
+
+    /// Select the best representative video from a group for AI parsing.
+    /// 
+    /// Priority order:
+    /// 1. Standard episode format (SxxExx, e.g., S02E01) - most reliable for AI parsing
+    /// 2. Any non-Special file
+    /// 3. First file as fallback
+    /// 
+    /// This avoids selecting "Special" files first, which often cause AI to produce
+    /// incorrect titles like "Black Mirror Special White Christmas" instead of "Black Mirror".
+    fn select_representative_video(videos: &[VideoFile]) -> &VideoFile {
+        use regex::Regex;
+        
+        // Pattern 1: Standard SxxExx format (e.g., S02E01, s01e05)
+        let standard_episode_regex = Regex::new(r"(?i)S\d{1,2}E\d{1,2}").unwrap();
+        
+        // Pattern 2: Special indicator patterns to avoid
+        let special_regex = Regex::new(r"(?i)(\.special\.|[_\-\.]sp[_\-\.]|\[sp\]|special)").unwrap();
+        
+        // First pass: find a file with standard SxxExx format
+        if let Some(video) = videos.iter().find(|v| standard_episode_regex.is_match(&v.filename)) {
+            tracing::debug!("Selected representative video (standard format): {}", video.filename);
+            return video;
+        }
+        
+        // Second pass: find any file that's not a Special
+        if let Some(video) = videos.iter().find(|v| !special_regex.is_match(&v.filename)) {
+            tracing::debug!("Selected representative video (non-special): {}", video.filename);
+            return video;
+        }
+        
+        // Fallback: first file
+        tracing::debug!("Selected representative video (fallback): {}", videos[0].filename);
+        &videos[0]
     }
 
     /// Group videos by their immediate parent directory.
