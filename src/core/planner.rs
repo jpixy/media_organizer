@@ -119,11 +119,21 @@ fn language_code_to_name(code: &str) -> String {
     }
 }
 
+/// Normalize language code to standard ISO 639-1.
+/// Handles TMDB quirks like "cn" -> "zh".
+fn normalize_language_code(code: &str) -> &str {
+    match code.to_lowercase().as_str() {
+        "cn" => "zh",  // TMDB sometimes uses "cn" for Chinese
+        _ => code,
+    }
+}
+
 /// Format language folder name from original_language.
 /// Returns format like "ZH_Chinese", "EN_English", etc.
 fn format_language_folder(original_language: &str) -> String {
-    let name = language_code_to_name(original_language);
-    format!("{}_{}", original_language.to_uppercase(), name)
+    let normalized = normalize_language_code(original_language);
+    let name = language_code_to_name(normalized);
+    format!("{}_{}", normalized.to_uppercase(), name)
 }
 
 /// Planner configuration.
@@ -4874,8 +4884,21 @@ mod tests {
         assert_eq!(format_language_folder("EN"), "EN_English");
         assert_eq!(format_language_folder("ZH"), "ZH_Chinese");
 
+        // TMDB quirk: "cn" should normalize to "zh"
+        assert_eq!(format_language_folder("cn"), "ZH_Chinese");
+        assert_eq!(format_language_folder("CN"), "ZH_Chinese");
+
         // Unknown language
         assert_eq!(format_language_folder("xx"), "XX_XX");
+    }
+
+    #[test]
+    fn test_normalize_language_code() {
+        assert_eq!(normalize_language_code("cn"), "zh");
+        assert_eq!(normalize_language_code("CN"), "zh");
+        assert_eq!(normalize_language_code("zh"), "zh");
+        assert_eq!(normalize_language_code("en"), "en");
+        assert_eq!(normalize_language_code("ja"), "ja");
     }
 
     #[test]
