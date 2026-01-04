@@ -63,13 +63,16 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
         rollback_path.display()
     );
 
-    // Print next steps
+    // Print next steps with complete commands
     println!();
-    println!("{}", "[Next Steps]".bold().yellow());
+    println!("{}", "[Next Steps]".bold().cyan());
+    println!("  To undo all changes, run:");
+    println!();
     println!(
-        "  To undo changes: {}",
-        format!("media-organizer rollback {}", rollback_path.display()).cyan()
+        "    {}",
+        format!("media-organizer rollback {}", rollback_path.display()).bold()
     );
+    println!();
 
     Ok(())
 }

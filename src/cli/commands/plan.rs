@@ -120,16 +120,18 @@ async fn plan_media(
         }
     }
 
-    // Print next steps
+    // Print next steps with complete commands
     println!();
-    println!("{}", "[Next Steps]".bold().yellow());
+    println!("{}", "[Next Steps]".bold().cyan());
+    println!("  1. Review the plan:");
     println!(
-        "  1. Review the plan: {}",
-        format!("cat {}", output_path.display()).cyan()
+        "     {}",
+        format!("cat {}", output_path.display()).bold()
     );
+    println!("  2. Execute the plan:");
     println!(
-        "  2. Execute the plan: {}",
-        format!("media-organizer execute {}", output_path.display()).cyan()
+        "     {}",
+        format!("media-organizer execute {}", output_path.display()).bold()
     );
 
     // Warn about unknown files - group by error reason

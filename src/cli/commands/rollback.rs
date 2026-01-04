@@ -47,8 +47,27 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
     if result.is_success() {
         if dry_run {
             println!("{}", "[OK] Dry run complete - no changes were made".green());
+            println!();
+            println!("{}", "[Next Steps]".bold().cyan());
+            println!("  To actually execute the rollback:");
+            println!(
+                "     {}",
+                format!("media-organizer rollback {}", rollback_file.display()).bold()
+            );
         } else {
             println!("{}", "[OK] Rollback completed successfully!".green());
+            println!();
+            println!("{}", "[Next Steps]".bold().cyan());
+            println!("  Files have been restored. To reorganize, run:");
+            println!(
+                "     {}",
+                "media-organizer plan movies <source> -t <target>".bold()
+            );
+            println!("  or:");
+            println!(
+                "     {}",
+                "media-organizer plan tvshows <source> -t <target>".bold()
+            );
         }
     } else {
         println!("{}", "[WARNING] Rollback completed with errors".yellow());
