@@ -1251,35 +1251,31 @@ impl Planner {
             })
             .unwrap_or_default();
 
-        // Extract country codes - use production_countries first, then origin_country as fallback
-        let mut country_codes: Vec<String> = details
-            .production_countries
-            .as_ref()
-            .map(|countries| countries.iter().map(|c| c.iso_3166_1.clone()).collect())
-            .unwrap_or_default();
-
-        // Use origin_country as fallback if production_countries is empty
-        if country_codes.is_empty() {
-            if let Some(ref origin) = details.origin_country {
-                country_codes = origin.clone();
-            }
-        }
-
-        // Extract country names - use production_countries first, then map from origin_country codes
-        let countries: Vec<String> = if let Some(ref pc) = details.production_countries {
-            if !pc.is_empty() {
-                pc.iter().map(|c| c.name.clone()).collect()
-            } else if let Some(ref oc) = details.origin_country {
-                // Map country codes to names
-                oc.iter().map(|c| country_code_to_name(c)).collect()
+        // Extract country codes - prioritize origin_country, fallback to production_countries
+        let country_codes: Vec<String> = if let Some(ref origin) = details.origin_country {
+            if !origin.is_empty() {
+                origin.clone()
             } else {
-                Vec::new()
+                details
+                    .production_countries
+                    .as_ref()
+                    .map(|countries| countries.iter().map(|c| c.iso_3166_1.clone()).collect())
+                    .unwrap_or_default()
             }
-        } else if let Some(ref oc) = details.origin_country {
-            oc.iter().map(|c| country_code_to_name(c)).collect()
         } else {
-            Vec::new()
+            details
+                .production_countries
+                .as_ref()
+                .map(|countries| countries.iter().map(|c| c.iso_3166_1.clone()).collect())
+                .unwrap_or_default()
         };
+
+        // Extract country names - ALWAYS use country_code_to_name for consistency
+        // This ensures country_codes and countries have matching order and format
+        let countries: Vec<String> = country_codes
+            .iter()
+            .map(|c| country_code_to_name(c))
+            .collect();
 
         let genres: Vec<String> = details
             .genres
@@ -4131,35 +4127,31 @@ impl Planner {
             .map(|g| g.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
-        // Extract country codes - use production_countries first, then origin_country as fallback
-        let mut country_codes: Vec<String> = details
-            .production_countries
-            .as_ref()
-            .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
-            .unwrap_or_default();
-
-        // Use origin_country as fallback if production_countries is empty
-        if country_codes.is_empty() {
-            if let Some(ref origin) = details.origin_country {
-                country_codes = origin.clone();
-            }
-        }
-
-        // Extract country names - use production_countries first, then map from origin_country codes
-        let countries: Vec<String> = if let Some(ref pc) = details.production_countries {
-            if !pc.is_empty() {
-                pc.iter().map(|x| x.name.clone()).collect()
-            } else if let Some(ref oc) = details.origin_country {
-                // Map country codes to names
-                oc.iter().map(|c| country_code_to_name(c)).collect()
+        // Extract country codes - prioritize origin_country, fallback to production_countries
+        let country_codes: Vec<String> = if let Some(ref origin) = details.origin_country {
+            if !origin.is_empty() {
+                origin.clone()
             } else {
-                Vec::new()
+                details
+                    .production_countries
+                    .as_ref()
+                    .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
+                    .unwrap_or_default()
             }
-        } else if let Some(ref oc) = details.origin_country {
-            oc.iter().map(|c| country_code_to_name(c)).collect()
         } else {
-            Vec::new()
+            details
+                .production_countries
+                .as_ref()
+                .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
+                .unwrap_or_default()
         };
+
+        // Extract country names - ALWAYS use country_code_to_name for consistency
+        // This ensures country_codes and countries have matching order and format
+        let countries: Vec<String> = country_codes
+            .iter()
+            .map(|c| country_code_to_name(c))
+            .collect();
 
         // Extract studios
         let studios = details
