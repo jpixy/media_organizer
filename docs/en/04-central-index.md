@@ -117,38 +117,46 @@ Users with large media collections often store movies across multiple external h
 ### 4.1 index Command
 
 ```bash
-# Basic usage - index current drive
-media-organizer index /run/media/johnny/JMedia_M05/Movies_organized
+# Basic usage - scan and index directory
+media-organizer index scan /run/media/johnny/JMedia_M05/Movies_organized
 
 # Use custom disk label
-media-organizer index /path/to/movies --disk-label "Archive_2024"
+media-organizer index scan /path/to/movies --disk-label "Archive_2024"
 
 # Index TV shows
-media-organizer index /path/to/tvshows --media-type tvshows
+media-organizer index scan /path/to/tvshows --media-type tvshows
 
 # Force re-index
-media-organizer index /path/to/movies --force
+media-organizer index scan /path/to/movies --force
 
-# Dry run
-media-organizer index /path/to/movies --dry-run
+# Show statistics
+media-organizer index stats
+
+# List disk contents
+media-organizer index list --disk-label JMedia_M05
+
+# Remove disk from index
+media-organizer index remove JMedia_OLD
 ```
 
 ### 4.2 search Command
 
+**Note: Search includes both movies and TV shows.**
+
 ```bash
-# Search by actor
+# Search by actor (searches both movies and TV shows)
 media-organizer search --actor "Johnny Depp"
 media-organizer search -a "Depp"
 
-# Search by director
+# Search by director (movies only)
 media-organizer search --director "Christopher Nolan"
 media-organizer search -d "Nolan"
 
-# Search by collection
+# Search by collection (movies only)
 media-organizer search --collection "Pirates"
 media-organizer search -c "Marvel"
 
-# Search by title
+# Search by title (searches both movies and TV shows)
 media-organizer search --title "Caribbean"
 media-organizer search -t "Inception"
 
@@ -167,22 +175,37 @@ media-organizer search --actor "Depp" --year 2000-2010
 
 # Show disk status
 media-organizer search --actor "Depp" --show-status
+
+# JSON output format
+media-organizer search --title "Black Mirror" --format json
 ```
 
-### 4.3 Statistics and Management
+### 4.3 Search Scope
+
+| Criteria | Movies | TV Shows |
+|----------|--------|----------|
+| --title | ✅ | ✅ |
+| --actor | ✅ | ✅ |
+| --director | ✅ | ❌ |
+| --collection | ✅ | ❌ |
+| --year | ✅ | ✅ |
+| --genre | ✅ | ✅ |
+| --country | ✅ | ✅ |
+
+### 4.4 Statistics and Management
 
 ```bash
-# Show collection statistics
-media-organizer index --stats
+# Show collection statistics (includes both movies and TV shows)
+media-organizer index stats
 
 # List disk contents
-media-organizer index --list JMedia_M05
+media-organizer index list --disk-label JMedia_M05
 
 # Remove disk from index
-media-organizer index --remove JMedia_OLD
+media-organizer index remove JMedia_OLD
 
 # Verify index against files
-media-organizer index --verify /run/media/johnny/JMedia_M05
+media-organizer index verify --disk-label JMedia_M05
 ```
 
 ---
@@ -191,47 +214,62 @@ media-organizer index --verify /run/media/johnny/JMedia_M05
 
 ### 5.1 Search Output
 
+Search results include both movies and TV shows, displayed separately:
+
 ```
 $ media-organizer search --actor "Johnny Depp"
 
-Found 8 movies featuring "Johnny Depp":
+Found 5 results:
 
- #  | Year | Title                                    | Disk        | Status
+Movies (4):
+ #  | Year | Title                                    | Disk        | Country
 ----|------|------------------------------------------|-------------|--------
- 1  | 2003 | Pirates of the Caribbean: Curse of BP    | JMedia_M01  | Offline
- 2  | 2006 | Pirates of the Caribbean: Dead Man's     | JMedia_M02  | Offline
- 3  | 2007 | Pirates of the Caribbean: At World's End | JMedia_M05  | Online
- 4  | 2024 | Some Movie                               | JMedia_M05  | Online
+ 1  | 2003 | Pirates of the Caribbean: Curse of BP    | JMedia_M01  | US
+ 2  | 2006 | Pirates of the Caribbean: Dead Man's     | JMedia_M02  | US
+ 3  | 2007 | Pirates of the Caribbean: At World's End | JMedia_M05  | US
+ 4  | 2024 | Some Movie                               | JMedia_M05  | FR
 
-Collection info:
+TV Shows (1):
+ #  | Year | Title                                    | Disk        | Episodes
+----|------|------------------------------------------|-------------|--------
+ 1  | 2022 | Some Show                                | JMedia_M05  | 8
+
+Collections:
   - Pirates of the Caribbean: Own 5/5 (across 3 disks)
 ```
 
 ### 5.2 Statistics Output
 
+**Note: By Country and By Decade statistics include both movies and TV shows.**
+
 ```
-$ media-organizer index --stats
+$ media-organizer index stats
 
 Media Collection Statistics
-============================
+==================================================
 
 Disks:
-  JMedia_M01  | 280 movies |  45 shows | 1.2 TB | Last indexed: 2026-01-01
-  JMedia_M02  | 310 movies |  52 shows | 1.5 TB | Last indexed: 2025-12-28
-  JMedia_M05  | 150 movies |  30 shows | 0.8 TB | Last indexed: 2026-01-01
-  -------------------------------------------------------------------------
-  Total       | 740 movies | 127 shows | 3.5 TB
+  JMedia_M05 | 154 movies | 100 TV shows | 2959.9 GB | Online
+      movies -> /run/media/johnny/JMedia_M05/.../Movies_organized
+      tvshows -> /run/media/johnny/JMedia_M05/.../TV_Shows_organized
+--------------------------------------------------
+  Total | 154 movies | 100 TV shows | 2959.9 GB
 
 By Country:
-  US (United States)  ████████████████████  350 (47%)
-  CN (China)          ████████████          220 (30%)
-  KR (Korea)          ████                  85  (11%)
-  JP (Japan)          ██                    45  (6%)
-  Other               ██                    40  (6%)
+  US ████████████████ 82 (32%)
+  CN  ██████████████ 73 (29%)
+  KR           █████ 28 (11%)
+  JP             ███ 19 (7%)
+  GB             ███ 17 (7%)
 
-Collection Status:
-  Complete:    35 collections (all movies owned)
-  Incomplete:  18 collections (some movies missing)
+By Decade:
+  2020s      ██████████ 131 (52%)
+  2010s ██████████████ 82 (32%)
+  2000s         ███████ 22 (9%)
+
+Collections:
+  Complete: 7 collections
+  Incomplete: 31 collections
 ```
 
 ---

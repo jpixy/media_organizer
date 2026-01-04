@@ -117,38 +117,46 @@
 ### 4.1 index 命令
 
 ```bash
-# 基本用法 - 索引当前硬盘
-media-organizer index /run/media/johnny/JMedia_M05/Movies_organized
+# 基本用法 - 扫描并索引目录
+media-organizer index scan /run/media/johnny/JMedia_M05/Movies_organized
 
 # 使用自定义硬盘标签
-media-organizer index /path/to/movies --disk-label "Archive_2024"
+media-organizer index scan /path/to/movies --disk-label "Archive_2024"
 
 # 索引电视剧
-media-organizer index /path/to/tvshows --media-type tvshows
+media-organizer index scan /path/to/tvshows --media-type tvshows
 
 # 强制重新索引
-media-organizer index /path/to/movies --force
+media-organizer index scan /path/to/movies --force
 
-# 试运行
-media-organizer index /path/to/movies --dry-run
+# 查看统计
+media-organizer index stats
+
+# 列出硬盘内容
+media-organizer index list --disk-label JMedia_M05
+
+# 移除硬盘
+media-organizer index remove JMedia_OLD
 ```
 
 ### 4.2 search 命令
 
+**注意：搜索同时包含电影和电视剧。**
+
 ```bash
-# 按演员搜索
+# 按演员搜索（同时搜索电影和电视剧）
 media-organizer search --actor "约翰尼·德普"
 media-organizer search -a "Johnny Depp"
 
-# 按导演搜索
+# 按导演搜索（仅电影）
 media-organizer search --director "克里斯托弗·诺兰"
 media-organizer search -d "Nolan"
 
-# 按系列搜索
+# 按系列搜索（仅电影合集）
 media-organizer search --collection "加勒比海盗"
 media-organizer search -c "Marvel"
 
-# 按标题搜索
+# 按标题搜索（同时搜索电影和电视剧）
 media-organizer search --title "加勒比"
 media-organizer search -t "Inception"
 
@@ -167,22 +175,37 @@ media-organizer search --actor "德普" --year 2000-2010
 
 # 显示硬盘状态
 media-organizer search --actor "Depp" --show-status
+
+# JSON 输出格式
+media-organizer search --title "黑镜" --format json
 ```
 
-### 4.3 统计和管理
+### 4.3 搜索范围说明
+
+| 搜索条件 | 电影 | 电视剧 |
+|---------|------|--------|
+| --title | ✅ | ✅ |
+| --actor | ✅ | ✅ |
+| --director | ✅ | ❌ |
+| --collection | ✅ | ❌ |
+| --year | ✅ | ✅ |
+| --genre | ✅ | ✅ |
+| --country | ✅ | ✅ |
+
+### 4.4 统计和管理
 
 ```bash
-# 显示收藏统计
-media-organizer index --stats
+# 显示收藏统计（包含电影和电视剧）
+media-organizer index stats
 
 # 列出硬盘内容
-media-organizer index --list JMedia_M05
+media-organizer index list --disk-label JMedia_M05
 
 # 从索引移除硬盘
-media-organizer index --remove JMedia_OLD
+media-organizer index remove JMedia_OLD
 
 # 验证索引与文件
-media-organizer index --verify /run/media/johnny/JMedia_M05
+media-organizer index verify --disk-label JMedia_M05
 ```
 
 ---
@@ -191,47 +214,62 @@ media-organizer index --verify /run/media/johnny/JMedia_M05
 
 ### 5.1 搜索输出
 
+搜索结果同时包含电影和电视剧，分开显示：
+
 ```
 $ media-organizer search --actor "约翰尼·德普"
 
-找到 8 部包含演员 "约翰尼·德普" 的电影：
+Found 5 results:
 
- #  | 年份 | 标题                                    | 硬盘        | 状态
+Movies (4):
+ #  | Year | 标题                                    | Disk        | Country
 ----|------|------------------------------------------|-------------|--------
- 1  | 2003 | 加勒比海盗：黑珍珠号的诅咒                  | JMedia_M01  | 离线
- 2  | 2006 | 加勒比海盗：聚魂棺                         | JMedia_M02  | 离线
- 3  | 2007 | 加勒比海盗：世界的尽头                      | JMedia_M05  | 在线
- 4  | 2024 | 僵尸喜欢黑夜                               | JMedia_M05  | 在线
+ 1  | 2003 | 加勒比海盗：黑珍珠号的诅咒                  | JMedia_M01  | US
+ 2  | 2006 | 加勒比海盗：聚魂棺                         | JMedia_M02  | US
+ 3  | 2007 | 加勒比海盗：世界的尽头                      | JMedia_M05  | US
+ 4  | 2024 | 僵尸喜欢黑夜                               | JMedia_M05  | FR
 
-系列信息:
+TV Shows (1):
+ #  | Year | 标题                                    | Disk        | Episodes
+----|------|------------------------------------------|-------------|--------
+ 1  | 2022 | 某剧集                                   | JMedia_M05  | 8
+
+Collections:
   - 加勒比海盗系列: 已拥有 5/5 部（分布在 3 个硬盘）
 ```
 
 ### 5.2 统计输出
 
+**注意：By Country 和 By Decade 统计同时包含电影和电视剧。**
+
 ```
-$ media-organizer index --stats
+$ media-organizer index stats
 
-媒体收藏统计
-============================
+Media Collection Statistics
+==================================================
 
-硬盘:
-  JMedia_M01  | 280 部电影 |  45 部剧集 | 1.2 TB | 最后索引: 2026-01-01
-  JMedia_M02  | 310 部电影 |  52 部剧集 | 1.5 TB | 最后索引: 2025-12-28
-  JMedia_M05  | 150 部电影 |  30 部剧集 | 0.8 TB | 最后索引: 2026-01-01
-  -------------------------------------------------------------------------
-  合计        | 740 部电影 | 127 部剧集 | 3.5 TB
+Disks:
+  JMedia_M05 | 154 movies | 100 TV shows | 2959.9 GB | Online
+      movies -> /run/media/johnny/JMedia_M05/.../Movies_organized
+      tvshows -> /run/media/johnny/JMedia_M05/.../TV_Shows_organized
+--------------------------------------------------
+  Total | 154 movies | 100 TV shows | 2959.9 GB
 
-按国家:
-  US (美国)    ████████████████████  350 (47%)
-  CN (中国)    ████████████          220 (30%)
-  KR (韩国)    ████                  85  (11%)
-  JP (日本)    ██                    45  (6%)
-  其他         ██                    40  (6%)
+By Country:
+  US ████████████████ 82 (32%)
+  CN  ██████████████ 73 (29%)
+  KR           █████ 28 (11%)
+  JP             ███ 19 (7%)
+  GB             ███ 17 (7%)
 
-系列收藏:
-  完整:    35 个系列（所有电影已拥有）
-  不完整:  18 个系列（部分电影缺失）
+By Decade:
+  2020s      ██████████ 131 (52%)
+  2010s ██████████████ 82 (32%)
+  2000s         ███████ 22 (9%)
+
+Collections:
+  Complete: 7 collections
+  Incomplete: 31 collections
 ```
 
 ---
