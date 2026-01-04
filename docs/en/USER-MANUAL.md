@@ -185,7 +185,7 @@ media-organizer index scan /mnt/library/tvshows --media-type tvshows --disk-labe
 media-organizer index stats
 ```
 
-**Note:** By Country and By Decade statistics include both movies and TV shows.
+**Note:** By Language and By Decade statistics include both movies and TV shows.
 
 ### 3.6 search - Search
 
@@ -201,7 +201,7 @@ Options:
   -c, --collection <series>  Search by collection (movies only)
   -y, --year <year>          Search by year (supports ranges: 2020-2024)
   -g, --genre <genre>        Search by genre
-  --country <code>           Search by country (US, CN, KR, JP, etc.)
+  --language <code>          Search by language (en, zh, ja, ko, etc.)
   --show-status              Show online/offline status
   --format <format>          Output: table, simple, json
 ```
@@ -343,7 +343,7 @@ media-organizer index scan /mnt/disk/tvshows --media-type tvshows --disk-label M
 | --collection | ✅ | ❌ |
 | --year | ✅ | ✅ |
 | --genre | ✅ | ✅ |
-| --country | ✅ | ✅ |
+| --language | ✅ | ✅ |
 
 ### 6.2 Output Formats
 

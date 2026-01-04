@@ -252,7 +252,7 @@ rollback.json + 整理后的目录结构
         "country_codes": ["US"]
       },
       "target": {
-        "folder": "US_UnitedStates/[Avatar](2009)-tt0499549-tmdb19995",
+        "folder": "EN_English/[Avatar](2009)-tt0499549-tmdb19995",
         "filename": "[Avatar](2009)-tt0499549-tmdb19995-1080p-BluRay-x264-8bit-dts-5.1.mp4"
       },
       "operations": [
@@ -282,7 +282,7 @@ rollback.json + 整理后的目录结构
       "seq": 1,
       "op_type": "move",
       "from": "/source/movie.mp4",
-      "to": "/target/US_UnitedStates/.../movie.mp4",
+      "to": "/target/EN_English/.../movie.mp4",
       "executed": true
     }
   ]

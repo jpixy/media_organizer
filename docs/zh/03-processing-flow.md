@@ -425,7 +425,7 @@ pub enum DirectoryType {
 当文件名不包含 TMDB ID 时，系统会从父文件夹提取：
 
 ```
-Movies_organized/CN_China/[Avatar](2009)-tt0499549-tmdb19995/
+Movies_organized/EN_English/[Avatar](2009)-tt0499549-tmdb19995/
   └── [Avatar](2009)-1080p-WEB-DL.mp4  <- 从父文件夹获取 tmdb19995
 ```
 

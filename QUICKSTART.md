@@ -121,8 +121,8 @@ media-organizer search -t "Avatar"
 # Search by actor
 media-organizer search -a "Tom Hanks"
 
-# Search by country with disk status
-media-organizer search --country CN --show-status
+# Search by language with disk status
+media-organizer search --language zh --show-status
 
 # Search by year range
 media-organizer search -y 2020-2024
@@ -151,20 +151,22 @@ media-organizer import backup.zip --merge --force
 
 ## Output Example
 
-After execution, your movies will be organized as:
+After execution, your movies will be organized by **language**:
 
 ```
 Movies_organized/
-├── CN_China/
+├── ZH_Chinese/                    # Chinese language movies
 │   └── [刺杀小说家2](2025)-tt33095008-tmdb945801/
-│       ├── [刺杀小说家2](2025)-2160p-BluRay-hevc-8bit-dts-5.1.mp4
+│       ├── [刺杀小说家2](2025)-3840x2160(2160p)-BluRay-hevc-8bit-dts-5.1.mp4
 │       ├── movie.nfo
 │       └── poster.jpg
-├── US_UnitedStates/
+├── EN_English/                    # English language movies
 │   └── [Inception](2010)-tt1375666-tmdb27205/
-│       ├── [Inception](2010)-1080p-BluRay-h264-8bit-dts-5.1.mp4
+│       ├── [Inception](2010)-1920x1080(1080p)-BluRay-h264-8bit-dts-5.1.mp4
 │       ├── movie.nfo
 │       └── poster.jpg
+├── JA_Japanese/                   # Japanese language movies
+├── KO_Korean/                     # Korean language movies
 └── ...
 ```
 
@@ -182,10 +184,10 @@ Disks:
 --------------------------------------------------
   Total | 159 movies | 45 TV shows | 572.1 GB
 
-By Country:
-  CN ████████████████████ 65 (41%)
-  US      ██████████ 35 (22%)
-  KR           █████ 20 (13%)
+By Language:
+  ZH ████████████████████ 65 (41%)
+  EN      ██████████ 35 (22%)
+  KO           █████ 20 (13%)
   ...
 
 $ media-organizer search -t "Avatar" --show-status

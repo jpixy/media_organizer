@@ -48,9 +48,9 @@
 
 **Example**:
 ```
-US_UnitedStates/
+EN_English/
 └── [Avatar](2009)-tt0499549-tmdb19995/
-    ├── [Avatar](2009)-tt0499549-tmdb19995-2160p-BluRay-x265-10bit-TrueHD-7.1.mkv
+    ├── [Avatar](2009)-3840x2160(2160p)-BluRay-x265-10bit-TrueHD-7.1.mkv
     ├── movie.nfo
     └── poster.jpg
 ```

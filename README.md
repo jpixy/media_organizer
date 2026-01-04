@@ -14,7 +14,7 @@ A smart media file organizer that uses AI to parse filenames and fetch metadata 
 - **Safe operations** - Generate plan first, preview, then execute with full rollback support
 - **GPU acceleration** - Supports NVIDIA GPU for accelerated AI inference
 - **Central indexing** - Build searchable index across multiple disks
-- **Cross-disk search** - Search by title, actor, director, collection, year, genre, country
+- **Cross-disk search** - Search by title, actor, director, collection, year, genre, language
 - **Export/Import** - Backup and migrate your configuration and indexes
 - **Detailed logging** - Complete operation logs and progress display
 
@@ -177,8 +177,8 @@ media-organizer search -y 2020-2024
 # Search by genre
 media-organizer search -g "Action"
 
-# Search by country
-media-organizer search --country US
+# Search by language
+media-organizer search --language zh
 
 # Show disk online/offline status
 media-organizer search -t "Avatar" --show-status
@@ -187,7 +187,7 @@ media-organizer search -t "Avatar" --show-status
 media-organizer search -t "Avatar" --format json
 
 # Combine filters
-media-organizer search -a "Tom Hanks" -y 2000-2020 --country US
+media-organizer search -a "Tom Hanks" -y 2000-2020 --language en
 ```
 
 ### export - Export Configuration
@@ -255,12 +255,13 @@ media-organizer verify <PATH>    # Verify video files
 
 ### Movie Folder Structure
 
+Movies are organized by **original language** (from TMDB `original_language`):
+
 ```
 Movies_organized/
-└── CN_China/
+└── ZH_Chinese/                 # Chinese language movies
     └── [Movie Name](Year)-ttIMDB_ID-tmdbTMDB_ID/
-        ├── [Movie Name](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.mp4
-        ├── [Movie Name](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels-sample.mp4  (if exists)
+        ├── [Movie Name](Year)-WIDTHxHEIGHT(Resolution)-Format-Codec-BitDepth-Audio-Channels.mp4
         ├── movie.nfo
         ├── poster.jpg
         ├── Subs/                    (subtitle folder, if exists)
@@ -275,21 +276,33 @@ Movies_organized/
 
 ```
 TV_Shows_organized/
-└── US_UnitedStates/
+└── EN_English/                  # English language shows
     └── [Show Name](Year)-ttIMDB_ID-tmdbTMDB_ID/
         ├── Season 01/
-        │   ├── [Show Name]-S01E01-Episode Name-1080p-WEB-DL.mp4
+        │   ├── [Show Name]-S01E01-Episode Name-1920x1080(1080p)-WEB-DL.mp4
         │   └── ...
         ├── tvshow.nfo
         └── poster.jpg
 ```
 
+### Language Folder Examples
+
+| Language | Folder Name |
+|----------|-------------|
+| Chinese | `ZH_Chinese/` |
+| English | `EN_English/` |
+| Japanese | `JA_Japanese/` |
+| Korean | `KO_Korean/` |
+| French | `FR_French/` |
+| German | `DE_German/` |
+| Spanish | `ES_Spanish/` |
+
 ### Example
 
 ```
-CN_China/
+ZH_Chinese/
 └── [刺杀小说家2](2025)-tt33095008-tmdb945801/
-    ├── [刺杀小说家2](2025)-2160p-BluRay-hevc-8bit-dts-5.1.mp4
+    ├── [刺杀小说家2](2025)-3840x2160(2160p)-BluRay-hevc-8bit-dts-5.1.mp4
     ├── movie.nfo
     └── poster.jpg
 ```

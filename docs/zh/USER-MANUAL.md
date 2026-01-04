@@ -214,10 +214,10 @@ Disks:
 --------------------------------------------------
   Total | 154 movies | 100 TV shows | 2959.9 GB
 
-By Country:
-  US ████████████████ 82 (32%)
-  CN  ██████████████ 73 (29%)
-  KR           █████ 28 (11%)
+By Language:
+  EN ████████████████ 82 (32%)
+  ZH  ██████████████ 73 (29%)
+  KO           █████ 28 (11%)
 
 By Decade:
   2020s      ██████████ 131 (52%)
@@ -229,7 +229,7 @@ Collections:
   Incomplete: 31 collections
 ```
 
-**注意：** By Country 和 By Decade 统计同时包含电影和电视剧。
+**注意：** By Language 和 By Decade 统计同时包含电影和电视剧。
 
 #### list - 列出内容
 
@@ -261,7 +261,7 @@ Options:
   -c, --collection <系列>   按系列搜索（仅电影）
   -y, --year <年份>         按年份搜索（支持范围：2020-2024）
   -g, --genre <类型>        按类型搜索
-  --country <国家代码>      按国家搜索（US, CN, KR, JP 等）
+  --language <语言代码>     按语言搜索（en, zh, ja, ko 等）
   --show-status             显示在线/离线状态
   --format <格式>           输出格式：table, simple, json
 ```
@@ -418,14 +418,14 @@ media-organizer import backup_20260104.zip --force --backup-first
 ```
 /library/
 ├── movies/
-│   ├── CN_China/
-│   │   └── [西游记之大圣归来][Monkey King Hero Is Back](2015)-tt4040840-tmdb166589/
-│   │       ├── [西游记之大圣归来]-1080p-BluRay-h264-8bit-aac-2.0.mp4
+│   ├── ZH_Chinese/
+│   │   └── [西游记之大圣归来](2015)-tt4040840-tmdb166589/
+│   │       ├── [西游记之大圣归来](2015)-1920x1080(1080p)-BluRay-h264-8bit-aac-2.0.mp4
 │   │       ├── movie.nfo
 │   │       └── poster.jpg
-│   └── US_UnitedStates/
+│   └── EN_English/
 │       └── [Inception][盗梦空间](2010)-tt1375666-tmdb27205/
-│           ├── [盗梦空间]-1080p-BluRay-h264-8bit-dts-5.1.mkv
+│           ├── [Inception][盗梦空间](2010)-1920x1080(1080p)-BluRay-h264-8bit-dts-5.1.mkv
 │           ├── movie.nfo
 │           └── poster.jpg
 └── tvshows/
@@ -496,7 +496,7 @@ media-organizer index scan /mnt/disk/tvshows --media-type tvshows --disk-label M
 | --collection | ✅ | ❌ |
 | --year | ✅ | ✅ |
 | --genre | ✅ | ✅ |
-| --country | ✅ | ✅ |
+| --language | ✅ | ✅ |
 
 ### 6.2 输出格式
 

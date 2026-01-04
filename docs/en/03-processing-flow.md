@@ -322,7 +322,7 @@ For already-organized files, the system:
 When filename doesn't contain TMDB ID, system extracts from parent folder:
 
 ```
-Movies_organized/CN_China/[Avatar](2009)-tt0499549-tmdb19995/
+Movies_organized/EN_English/[Avatar](2009)-tt0499549-tmdb19995/
   |-- [Avatar](2009)-1080p-WEB-DL.mp4  <- Gets tmdb19995 from parent
 ```
 

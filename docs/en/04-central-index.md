@@ -61,7 +61,7 @@ Users with large media collections often store movies across multiple external h
     {
       "id": "uuid-xxxx",
       "disk": "JMedia_M01",
-      "relative_path": "US_UnitedStates/[Pirates of the Caribbean...]/movie.mkv",
+      "relative_path": "EN_English/[Pirates of the Caribbean...]/movie.mkv",
       "title": "Pirates of the Caribbean: The Curse of the Black Pearl",
       "original_title": "Pirates of the Caribbean: The Curse of the Black Pearl",
       "year": 2003,
@@ -168,7 +168,7 @@ media-organizer search --year 2020-2024
 media-organizer search --genre "Action"
 
 # Search by country
-media-organizer search --country US
+media-organizer search --language en
 
 # Combined filters
 media-organizer search --actor "Depp" --year 2000-2010
@@ -190,7 +190,7 @@ media-organizer search --title "Black Mirror" --format json
 | --collection | ✅ | ❌ |
 | --year | ✅ | ✅ |
 | --genre | ✅ | ✅ |
-| --country | ✅ | ✅ |
+| --language | ✅ | ✅ |
 
 ### 4.4 Statistics and Management
 
@@ -240,7 +240,7 @@ Collections:
 
 ### 5.2 Statistics Output
 
-**Note: By Country and By Decade statistics include both movies and TV shows.**
+**Note: By Language and By Decade statistics include both movies and TV shows.**
 
 ```
 $ media-organizer index stats
@@ -255,9 +255,9 @@ Disks:
 --------------------------------------------------
   Total | 154 movies | 100 TV shows | 2959.9 GB
 
-By Country:
-  US ████████████████ 82 (32%)
-  CN  ██████████████ 73 (29%)
+By Language:
+  EN ████████████████ 82 (32%)
+  ZH  ██████████████ 73 (29%)
   KR           █████ 28 (11%)
   JP             ███ 19 (7%)
   GB             ███ 17 (7%)

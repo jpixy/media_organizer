@@ -48,9 +48,9 @@
 
 **示例**：
 ```
-US_UnitedStates/
+EN_English/
 └── [Avatar](2009)-tt0499549-tmdb19995/
-    ├── [Avatar](2009)-tt0499549-tmdb19995-2160p-BluRay-x265-10bit-TrueHD-7.1.mkv
+    ├── [Avatar](2009)-3840x2160(2160p)-BluRay-x265-10bit-TrueHD-7.1.mkv
     ├── movie.nfo
     └── poster.jpg
 ```
@@ -74,7 +74,7 @@ Season {XX}/
 
 **示例**：
 ```
-CN_China/
+ZH_Chinese/
 └── [罚罪2](2025)-tt36771056-tmdb296146/
     ├── tvshow.nfo
     ├── poster.jpg

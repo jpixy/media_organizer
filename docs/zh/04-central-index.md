@@ -61,7 +61,7 @@
     {
       "id": "uuid-xxxx",
       "disk": "JMedia_M01",
-      "relative_path": "US_UnitedStates/[Pirates of the Caribbean...]/movie.mkv",
+      "relative_path": "EN_English/[Pirates of the Caribbean...]/movie.mkv",
       "title": "加勒比海盗：黑珍珠号的诅咒",
       "original_title": "Pirates of the Caribbean: The Curse of the Black Pearl",
       "year": 2003,
@@ -168,7 +168,7 @@ media-organizer search --year 2020-2024
 media-organizer search --genre "动作"
 
 # 按国家搜索
-media-organizer search --country US
+media-organizer search --language en
 
 # 组合筛选
 media-organizer search --actor "德普" --year 2000-2010
@@ -190,7 +190,7 @@ media-organizer search --title "黑镜" --format json
 | --collection | ✅ | ❌ |
 | --year | ✅ | ✅ |
 | --genre | ✅ | ✅ |
-| --country | ✅ | ✅ |
+| --language | ✅ | ✅ |
 
 ### 4.4 统计和管理
 
@@ -240,7 +240,7 @@ Collections:
 
 ### 5.2 统计输出
 
-**注意：By Country 和 By Decade 统计同时包含电影和电视剧。**
+**注意：By Language 和 By Decade 统计同时包含电影和电视剧。**
 
 ```
 $ media-organizer index stats
@@ -255,9 +255,9 @@ Disks:
 --------------------------------------------------
   Total | 154 movies | 100 TV shows | 2959.9 GB
 
-By Country:
-  US ████████████████ 82 (32%)
-  CN  ██████████████ 73 (29%)
+By Language:
+  EN ████████████████ 82 (32%)
+  ZH  ██████████████ 73 (29%)
   KR           █████ 28 (11%)
   JP             ███ 19 (7%)
   GB             ███ 17 (7%)
