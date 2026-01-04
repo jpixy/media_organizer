@@ -172,17 +172,8 @@ impl RollbackExecutor {
                     }
                 }
                 RollbackActionType::Rmdir => {
-                    // Check if directory is empty
-                    if op.rollback.path.exists() {
-                        if let Ok(mut entries) = fs::read_dir(&op.rollback.path) {
-                            if entries.next().is_some() {
-                                conflicts.push(format!(
-                                    "Directory not empty: {}",
-                                    op.rollback.path.display()
-                                ));
-                            }
-                        }
-                    }
+                    // Directory not empty is not a conflict - we simply skip removing it
+                    // The files were moved back, directory cleanup is optional
                 }
             }
         }
@@ -236,10 +227,11 @@ impl RollbackExecutor {
                     return Ok(false);
                 }
 
-                // Only remove if empty
+                // Only remove if empty - silently skip non-empty directories
+                // This is expected behavior: files were moved back, other files may remain
                 if let Ok(mut entries) = fs::read_dir(path) {
                     if entries.next().is_some() {
-                        tracing::warn!("Directory not empty, skipping: {:?}", path);
+                        tracing::debug!("Directory not empty, keeping: {:?}", path);
                         return Ok(false);
                     }
                 }

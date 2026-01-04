@@ -2215,26 +2215,44 @@ impl Planner {
 
     /// Deduplicate operations across all items.
     /// 
-    /// This handles cases where multiple videos in the same directory share subtitles.
-    /// When two items have the same source file being moved, keep only the first occurrence.
+    /// This handles cases where:
+    /// 1. Multiple videos in the same directory share subtitles (Move operations)
+    /// 2. Multiple episodes share the same tvshow.nfo (Create operations)
+    /// 3. Multiple episodes share the same poster.jpg (Download operations)
+    /// 
+    /// When two items have the same target file, keep only the first occurrence.
     fn deduplicate_operations(&self, items: &mut [PlanItem]) {
         use std::collections::HashSet;
         
+        // Track seen sources (for Move operations - to avoid moving same file twice)
         let mut seen_sources: HashSet<PathBuf> = HashSet::new();
+        // Track seen targets (for Create/Download operations - to avoid creating/downloading same file twice)
+        let mut seen_targets: HashSet<PathBuf> = HashSet::new();
         let mut removed_count = 0;
         
         for item in items.iter_mut() {
             let original_len = item.operations.len();
             
             item.operations.retain(|op| {
-                if matches!(op.op, OperationType::Move) {
-                    if let Some(ref source) = op.from {
-                        // If we've already seen this source file, skip it
-                        if seen_sources.contains(source) {
+                match op.op {
+                    OperationType::Move => {
+                        if let Some(ref source) = op.from {
+                            // If we've already seen this source file, skip it
+                            if seen_sources.contains(source) {
+                                return false;
+                            }
+                            seen_sources.insert(source.clone());
+                        }
+                    }
+                    OperationType::Create | OperationType::Download => {
+                        // For Create/Download, deduplicate by target path
+                        // This prevents tvshow.nfo and poster.jpg from being created multiple times
+                        if seen_targets.contains(&op.to) {
                             return false;
                         }
-                        seen_sources.insert(source.clone());
+                        seen_targets.insert(op.to.clone());
                     }
+                    _ => {}
                 }
                 true
             });
@@ -2244,7 +2262,7 @@ impl Planner {
         
         if removed_count > 0 {
             tracing::info!(
-                "Deduplicated {} duplicate operations (shared subtitle files)",
+                "Deduplicated {} duplicate operations (shared files)",
                 removed_count
             );
         }
