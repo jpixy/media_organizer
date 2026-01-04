@@ -189,6 +189,3 @@ pub struct EpisodeMetadata {
     /// Overview.
     pub overview: Option<String>,
 }
-
-
-

@@ -276,3 +276,4 @@ pgrep -x ollama && echo "Ollama is running" || echo "Ollama is not running"
 - [RPM Fusion NVIDIA Driver Guide](https://rpmfusion.org/Howto/NVIDIA)
 - [NVIDIA CUDA Toolkit Documentation](https://developer.nvidia.com/cuda-toolkit)
 
+

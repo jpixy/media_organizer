@@ -33,9 +33,10 @@ pub async fn list_sessions() -> Result<()> {
     sessions.sort_by_key(|e| e.file_name());
     sessions.reverse(); // Most recent first
 
-    println!("{:<25} {:<10} {:<10} {}", 
-        "Session ID".bold(), 
-        "Items".bold(), 
+    println!(
+        "{:<25} {:<10} {:<10} {}",
+        "Session ID".bold(),
+        "Items".bold(),
         "Unknown".bold(),
         "Source".bold()
     );
@@ -95,8 +96,13 @@ pub async fn show_session(session_id: &str) -> Result<()> {
 
         println!("{}", "Plan Details:".bold());
         println!("  {} {}", "Created:".bold(), plan.created_at);
-        println!("  {} {}", "Media Type:".bold(), 
-            plan.media_type.map(|t| t.to_string()).unwrap_or_else(|| "unknown".to_string()));
+        println!(
+            "  {} {}",
+            "Media Type:".bold(),
+            plan.media_type
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        );
         println!("  {} {}", "Source:".bold(), plan.source_path.display());
         println!("  {} {}", "Target:".bold(), plan.target_path.display());
         println!("  {} {}", "Items:".bold(), plan.items.len());
@@ -144,5 +150,3 @@ pub async fn show_session(session_id: &str) -> Result<()> {
 
     Ok(())
 }
-
-

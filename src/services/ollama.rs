@@ -31,12 +31,11 @@ impl OllamaConfig {
     /// - `OLLAMA_MODEL`: Model name (default: qwen2.5:7b)
     /// - `OLLAMA_TIMEOUT`: Timeout in seconds (default: 120)
     pub fn from_env() -> Self {
-        let base_url = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-        
-        let model = std::env::var("OLLAMA_MODEL")
-            .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-        
+        let base_url =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+
+        let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+
         let timeout_secs = std::env::var("OLLAMA_TIMEOUT")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -180,5 +179,3 @@ impl Default for OllamaClient {
         Self::new()
     }
 }
-
-

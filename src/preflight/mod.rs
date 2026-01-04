@@ -80,6 +80,3 @@ pub fn print_results(results: &[CheckResult]) {
 pub fn all_passed(results: &[CheckResult]) -> bool {
     results.iter().all(|r| r.success)
 }
-
-
-

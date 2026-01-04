@@ -29,7 +29,12 @@ pub async fn execute_index(action: IndexAction) -> Result<()> {
         IndexAction::Duplicates { media_type, format } => {
             find_duplicates(&media_type, &format).await
         }
-        IndexAction::Collections { filter, format, paths, update } => {
+        IndexAction::Collections {
+            filter,
+            format,
+            paths,
+            update,
+        } => {
             if update {
                 update_collections().await?;
             }
@@ -230,7 +235,10 @@ async fn list_disk(disk_label: &str, media_type: &str) -> Result<()> {
             .collect();
 
         if !movies.is_empty() {
-            println!("{}", format!("Movies on {} ({}):", disk_label, movies.len()).bold());
+            println!(
+                "{}",
+                format!("Movies on {} ({}):", disk_label, movies.len()).bold()
+            );
             for movie in movies {
                 println!(
                     "  [{}] {} ({})",
@@ -541,10 +549,7 @@ async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
                 println!();
 
                 for group in &duplicates {
-                    let year_str = group
-                        .year
-                        .map(|y| format!("({})", y))
-                        .unwrap_or_default();
+                    let year_str = group.year.map(|y| format!("({})", y)).unwrap_or_default();
                     let type_badge = match group.media_type.as_str() {
                         "movie" => "[MOVIE]".cyan(),
                         "tvshow" => "[TVSHOW]".magenta(),
@@ -559,10 +564,7 @@ async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
                         group.tmdb_id,
                         group.entries.len()
                     );
-                    println!(
-                        "  Total size: {}",
-                        group.total_size_human.bold().red()
-                    );
+                    println!("  Total size: {}", group.total_size_human.bold().red());
                     println!("  {}", "-".repeat(60));
 
                     for entry in &group.entries {
@@ -612,11 +614,16 @@ async fn find_duplicates(media_type: &str, format: &str) -> Result<()> {
 async fn update_collections() -> Result<()> {
     use crate::services::tmdb::{TmdbClient, TmdbConfig};
     use std::path::PathBuf;
-    
-    println!("{}", "[UPDATE] Fetching collection details from TMDB...".bold().cyan());
-    
+
+    println!(
+        "{}",
+        "[UPDATE] Fetching collection details from TMDB..."
+            .bold()
+            .cyan()
+    );
+
     let mut index = indexer::load_central_index()?;
-    
+
     // Find collections that need updating (total_in_collection == 0)
     let collections_to_update: Vec<u64> = index
         .collections
@@ -624,87 +631,98 @@ async fn update_collections() -> Result<()> {
         .filter(|c| c.total_in_collection == 0 && c.owned_count > 0)
         .map(|c| c.id)
         .collect();
-    
+
     if collections_to_update.is_empty() {
         println!("  All collections already have complete info.");
         return Ok(());
     }
-    
-    println!("  Found {} collections to update", collections_to_update.len());
-    
+
+    println!(
+        "  Found {} collections to update",
+        collections_to_update.len()
+    );
+
     // Initialize TMDB client
     let tmdb_config = TmdbConfig::from_env()?;
     let tmdb_client = TmdbClient::new(tmdb_config);
-    
+
     // Track which NFO files need updating (disk -> relative_path -> total_movies)
-    let mut nfo_updates: std::collections::HashMap<(String, String), usize> = std::collections::HashMap::new();
-    
+    let mut nfo_updates: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+
     let pb = ProgressBar::new(collections_to_update.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
             .unwrap()
-            .progress_chars("=> ")
+            .progress_chars("=> "),
     );
-    
+
     for collection_id in &collections_to_update {
         pb.set_message(format!("Collection {}", collection_id));
-        
+
         match tmdb_client.get_collection_details(*collection_id).await {
             Ok(details) => {
                 let total = details.parts.len();
-                
+
                 // Update the collection in index
                 if let Some(collection) = index.collections.get_mut(collection_id) {
                     collection.total_in_collection = total;
-                    
+
                     // Track NFO files that need updating
                     for movie in &collection.movies {
                         if movie.owned {
                             if let Some(ref disk) = movie.disk {
                                 // Find the movie entry to get the relative path
-                                if let Some(movie_entry) = index.movies.iter().find(|m| {
-                                    m.tmdb_id == Some(movie.tmdb_id) && m.disk == *disk
-                                }) {
+                                if let Some(movie_entry) = index
+                                    .movies
+                                    .iter()
+                                    .find(|m| m.tmdb_id == Some(movie.tmdb_id) && m.disk == *disk)
+                                {
                                     nfo_updates.insert(
                                         (disk.clone(), movie_entry.relative_path.clone()),
-                                        total
+                                        total,
                                     );
                                 }
                             }
                         }
                     }
                 }
-                
+
                 tracing::debug!(
                     "[COLLECTION] Updated {} (tmdb{}): {} movies",
-                    details.name, collection_id, total
+                    details.name,
+                    collection_id,
+                    total
                 );
             }
             Err(e) => {
                 tracing::warn!("[COLLECTION] Failed to fetch {}: {}", collection_id, e);
             }
         }
-        
+
         pb.inc(1);
-        
+
         // Rate limiting: small delay between API calls
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    
+
     pb.finish_with_message("Done fetching from TMDB");
-    
+
     // Update NFO files
     if !nfo_updates.is_empty() {
-        println!("{}", format!("[UPDATE] Writing to {} NFO files...", nfo_updates.len()).cyan());
-        
+        println!(
+            "{}",
+            format!("[UPDATE] Writing to {} NFO files...", nfo_updates.len()).cyan()
+        );
+
         for ((disk_label, relative_path), total_movies) in &nfo_updates {
             // Find the disk base path
             if let Some(disk_info) = index.disks.get(disk_label) {
                 let nfo_path = PathBuf::from(&disk_info.base_path)
                     .join(relative_path)
                     .join("movie.nfo");
-                
+
                 if nfo_path.exists() {
                     match update_nfo_with_totalmovies(&nfo_path, *total_movies) {
                         Ok(_) => {
@@ -715,12 +733,15 @@ async fn update_collections() -> Result<()> {
                         }
                     }
                 } else {
-                    tracing::debug!("[NFO] File not found (disk offline?): {}", nfo_path.display());
+                    tracing::debug!(
+                        "[NFO] File not found (disk offline?): {}",
+                        nfo_path.display()
+                    );
                 }
             }
         }
     }
-    
+
     // Also update the movie entries with collection_total_movies
     for movie in &mut index.movies {
         if let Some(collection_id) = movie.collection_id {
@@ -731,40 +752,43 @@ async fn update_collections() -> Result<()> {
             }
         }
     }
-    
+
     // Save updated index
     index.update_statistics();
     indexer::save_central_index(&index)?;
-    
+
     println!("{}", "[OK] Collection info updated".bold().green());
-    
+
     Ok(())
 }
 
 /// Update an NFO file to include <totalmovies> tag within <set>.
 fn update_nfo_with_totalmovies(nfo_path: &std::path::Path, total_movies: usize) -> Result<()> {
     use std::fs;
-    
+
     let content = fs::read_to_string(nfo_path)?;
-    
+
     // Check if <totalmovies> already exists
     if content.contains("<totalmovies>") {
         // Update existing value
         let re = regex::Regex::new(r"<totalmovies>\d+</totalmovies>")?;
-        let updated = re.replace(&content, format!("<totalmovies>{}</totalmovies>", total_movies));
+        let updated = re.replace(
+            &content,
+            format!("<totalmovies>{}</totalmovies>", total_movies),
+        );
         fs::write(nfo_path, updated.as_ref())?;
     } else if content.contains("</set>") {
         // Add <totalmovies> before </set>
         let updated = content.replace(
             "</set>",
-            &format!("    <totalmovies>{}</totalmovies>\n  </set>", total_movies)
+            &format!("    <totalmovies>{}</totalmovies>\n  </set>", total_movies),
         );
         fs::write(nfo_path, updated)?;
     } else {
         // No <set> tag found, skip
         tracing::debug!("[NFO] No <set> tag found in {}", nfo_path.display());
     }
-    
+
     Ok(())
 }
 
@@ -814,12 +838,13 @@ async fn list_collections(filter: &str, format: &str, show_paths: bool) -> Resul
                 .filter(|cm| cm.owned) // Only show owned movies
                 .map(|cm| {
                     let disk = cm.disk.clone().unwrap_or_default();
-                    
+
                     // Find the movie in central index to get path
-                    let movie_entry = index.movies.iter().find(|m| {
-                        m.tmdb_id == Some(cm.tmdb_id) && m.disk == disk
-                    });
-                    
+                    let movie_entry = index
+                        .movies
+                        .iter()
+                        .find(|m| m.tmdb_id == Some(cm.tmdb_id) && m.disk == disk);
+
                     let path = if show_paths {
                         movie_entry.map(|m| m.relative_path.clone())
                     } else {
@@ -855,8 +880,14 @@ async fn list_collections(filter: &str, format: &str, show_paths: bool) -> Resul
 
     // Apply filter
     let collections: Vec<_> = match filter {
-        "complete" => collections.into_iter().filter(|c| c.status == "Complete").collect(),
-        "incomplete" => collections.into_iter().filter(|c| c.status == "Incomplete").collect(),
+        "complete" => collections
+            .into_iter()
+            .filter(|c| c.status == "Complete")
+            .collect(),
+        "incomplete" => collections
+            .into_iter()
+            .filter(|c| c.status == "Incomplete")
+            .collect(),
         _ => collections,
     };
 
@@ -909,8 +940,14 @@ async fn list_collections(filter: &str, format: &str, show_paths: bool) -> Resul
             if collections.is_empty() {
                 println!("{}", "No collections found.".yellow());
             } else {
-                let complete_count = collections.iter().filter(|c| c.status == "Complete").count();
-                let incomplete_count = collections.iter().filter(|c| c.status == "Incomplete").count();
+                let complete_count = collections
+                    .iter()
+                    .filter(|c| c.status == "Complete")
+                    .count();
+                let incomplete_count = collections
+                    .iter()
+                    .filter(|c| c.status == "Incomplete")
+                    .count();
                 let unknown_count = collections.iter().filter(|c| c.status == "Unknown").count();
 
                 println!("{}", "Movie Collections".bold().cyan());
@@ -956,12 +993,19 @@ async fn list_collections(filter: &str, format: &str, show_paths: bool) -> Resul
                         if let Some(ref path) = movie.path {
                             println!(
                                 "    {} {} | {} {} | {}",
-                                movie.title, year_str, movie.disk.bold(), disk_status, path
+                                movie.title,
+                                year_str,
+                                movie.disk.bold(),
+                                disk_status,
+                                path
                             );
                         } else {
                             println!(
                                 "    {} {} | {} {}",
-                                movie.title, year_str, movie.disk.bold(), disk_status
+                                movie.title,
+                                year_str,
+                                movie.disk.bold(),
+                                disk_status
                             );
                         }
                     }

@@ -46,18 +46,21 @@ pub async fn execute_export(
     println!();
     println!("Export contents:");
     if (options.only.is_none() || options.only == Some(ExportType::Config))
-        && !options.exclude.contains(&ExportType::Config) {
-            println!("  [x] App configuration (config.toml)");
-        }
+        && !options.exclude.contains(&ExportType::Config)
+    {
+        println!("  [x] App configuration (config.toml)");
+    }
     if (options.only.is_none() || options.only == Some(ExportType::Indexes))
-        && !options.exclude.contains(&ExportType::Indexes) {
-            println!("  [x] Central index");
-            println!("  [x] Disk indexes");
-        }
+        && !options.exclude.contains(&ExportType::Indexes)
+    {
+        println!("  [x] Central index");
+        println!("  [x] Disk indexes");
+    }
     if (options.only.is_none() || options.only == Some(ExportType::Sessions))
-        && !options.exclude.contains(&ExportType::Sessions) {
-            println!("  [x] Session history");
-        }
+        && !options.exclude.contains(&ExportType::Sessions)
+    {
+        println!("  [x] Session history");
+    }
     if include_secrets {
         println!("  [x] Sensitive data (API keys)");
     } else {
@@ -199,4 +202,3 @@ fn parse_export_type(s: &str) -> Option<ExportType> {
         _ => None,
     }
 }
-

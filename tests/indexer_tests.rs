@@ -345,7 +345,11 @@ fn test_rescan_no_duplicates() {
     }
 
     // Should still only have 2 movies (not 6)
-    assert_eq!(central.movies.len(), 2, "No duplicates after repeated scans");
+    assert_eq!(
+        central.movies.len(),
+        2,
+        "No duplicates after repeated scans"
+    );
     assert_eq!(central.disks.len(), 1, "Only one disk entry");
 }
 
@@ -869,4 +873,3 @@ fn test_backward_compatibility_base_path() {
     assert_eq!(disk_info.base_path, "/mnt/OldDisk/Movies");
     assert!(disk_info.paths.is_empty()); // Default empty HashMap
 }
-

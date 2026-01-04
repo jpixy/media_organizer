@@ -61,10 +61,11 @@ pub async fn verify(path: &Path) -> Result<()> {
     let mut error_count = 0;
 
     for file in &files {
-        let filename = file.file_name()
+        let filename = file
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         pb.set_message(format!("Verifying: {}", &filename));
         pb.inc(1);
 
@@ -135,5 +136,3 @@ pub async fn verify(path: &Path) -> Result<()> {
 
     Ok(())
 }
-
-

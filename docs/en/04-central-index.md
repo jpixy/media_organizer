@@ -270,3 +270,4 @@ GET /collection/{collection_id}?api_key=xxx&language=en-US
 | Disk renamed | Provide `--rename` command |
 | Index corruption | Auto backup, support rebuild from disk indexes |
 
+

@@ -215,3 +215,4 @@ plan.json
 | File operation failed | Abort, preserve rollback record |
 | Target path conflict | Detect at Plan phase, error |
 
+

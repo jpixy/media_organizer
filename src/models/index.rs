@@ -43,7 +43,7 @@ impl Default for CentralIndex {
 }
 
 /// Information about an indexed disk.
-/// 
+///
 /// Supports composite storage: one disk label can have multiple media types
 /// (movies and tvshows) with different paths.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,7 +313,7 @@ impl CentralIndex {
     /// Rebuild search indexes from movie and tvshow entries.
     pub fn rebuild_indexes(&mut self) {
         self.indexes = SearchIndexes::default();
-        
+
         // Index movies
         for movie in &self.movies {
             // By actor
@@ -324,7 +324,7 @@ impl CentralIndex {
                     .or_default()
                     .push(movie.id.clone());
             }
-            
+
             // By director
             for director in &movie.directors {
                 self.indexes
@@ -333,7 +333,7 @@ impl CentralIndex {
                     .or_default()
                     .push(movie.id.clone());
             }
-            
+
             // By genre
             for genre in &movie.genres {
                 self.indexes
@@ -342,7 +342,7 @@ impl CentralIndex {
                     .or_default()
                     .push(movie.id.clone());
             }
-            
+
             // By year
             if let Some(year) = movie.year {
                 self.indexes
@@ -351,7 +351,7 @@ impl CentralIndex {
                     .or_default()
                     .push(movie.id.clone());
             }
-            
+
             // By country
             if let Some(ref country) = movie.country {
                 self.indexes
@@ -360,7 +360,7 @@ impl CentralIndex {
                     .or_default()
                     .push(movie.id.clone());
             }
-            
+
             // By collection
             if let Some(collection_id) = movie.collection_id {
                 self.indexes
@@ -368,19 +368,22 @@ impl CentralIndex {
                     .entry(collection_id)
                     .or_default()
                     .push(movie.id.clone());
-                
+
                 // Build collection info
                 let collection = self.collections.entry(collection_id).or_insert_with(|| {
                     CollectionInfo {
                         id: collection_id,
-                        name: movie.collection_name.clone().unwrap_or_else(|| "Unknown Collection".to_string()),
+                        name: movie
+                            .collection_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown Collection".to_string()),
                         poster_url: None,
                         movies: Vec::new(),
                         total_in_collection: 0, // Will be updated from NFO if available
                         owned_count: 0,
                     }
                 });
-                
+
                 // Update total_in_collection from NFO data if available and not already set
                 if let Some(total) = movie.collection_total_movies {
                     // Use the maximum value seen (in case different NFOs have different info)
@@ -388,9 +391,12 @@ impl CentralIndex {
                         collection.total_in_collection = total;
                     }
                 }
-                
+
                 // Add movie to collection if not already present
-                let already_in_collection = collection.movies.iter().any(|m| m.tmdb_id == movie.tmdb_id.unwrap_or(0));
+                let already_in_collection = collection
+                    .movies
+                    .iter()
+                    .any(|m| m.tmdb_id == movie.tmdb_id.unwrap_or(0));
                 if !already_in_collection {
                     collection.movies.push(CollectionMovie {
                         tmdb_id: movie.tmdb_id.unwrap_or(0),
@@ -403,7 +409,7 @@ impl CentralIndex {
                 }
             }
         }
-        
+
         // Index TV shows
         for tvshow in &self.tvshows {
             // By actor
@@ -414,7 +420,7 @@ impl CentralIndex {
                     .or_default()
                     .push(tvshow.id.clone());
             }
-            
+
             // By genre
             for genre in &tvshow.genres {
                 self.indexes
@@ -423,7 +429,7 @@ impl CentralIndex {
                     .or_default()
                     .push(tvshow.id.clone());
             }
-            
+
             // By year
             if let Some(year) = tvshow.year {
                 self.indexes
@@ -432,7 +438,7 @@ impl CentralIndex {
                     .or_default()
                     .push(tvshow.id.clone());
             }
-            
+
             // By country
             if let Some(ref country) = tvshow.country {
                 self.indexes
@@ -443,7 +449,7 @@ impl CentralIndex {
             }
         }
     }
-    
+
     /// Update statistics from current data.
     pub fn update_statistics(&mut self) {
         self.statistics.total_movies = self.movies.len();
@@ -451,20 +457,28 @@ impl CentralIndex {
         self.statistics.total_disks = self.disks.len();
         self.statistics.total_size_bytes = self.movies.iter().map(|m| m.size_bytes).sum::<u64>()
             + self.tvshows.iter().map(|t| t.size_bytes).sum::<u64>();
-        
+
         // By country
         self.statistics.by_country.clear();
         for movie in &self.movies {
             if let Some(ref country) = movie.country {
-                *self.statistics.by_country.entry(country.clone()).or_insert(0) += 1;
+                *self
+                    .statistics
+                    .by_country
+                    .entry(country.clone())
+                    .or_insert(0) += 1;
             }
         }
         for tvshow in &self.tvshows {
             if let Some(ref country) = tvshow.country {
-                *self.statistics.by_country.entry(country.clone()).or_insert(0) += 1;
+                *self
+                    .statistics
+                    .by_country
+                    .entry(country.clone())
+                    .or_insert(0) += 1;
             }
         }
-        
+
         // By decade
         self.statistics.by_decade.clear();
         for movie in &self.movies {
@@ -473,10 +487,11 @@ impl CentralIndex {
                 *self.statistics.by_decade.entry(decade).or_insert(0) += 1;
             }
         }
-        
+
         // Collections
         // Use total_in_collection from TMDB if available, otherwise use heuristics.
-        self.statistics.complete_collections = self.collections
+        self.statistics.complete_collections = self
+            .collections
             .values()
             .filter(|c| {
                 if c.total_in_collection > 0 {
@@ -488,7 +503,8 @@ impl CentralIndex {
                 }
             })
             .count();
-        self.statistics.incomplete_collections = self.collections
+        self.statistics.incomplete_collections = self
+            .collections
             .values()
             .filter(|c| {
                 if c.total_in_collection > 0 {
@@ -501,20 +517,18 @@ impl CentralIndex {
             })
             .count();
     }
-    
+
     /// Merge another index into this one (for import --merge).
     pub fn merge(&mut self, other: CentralIndex) {
         // Merge disks
         for (label, disk) in other.disks {
             self.disks.entry(label).or_insert(disk);
         }
-        
+
         // Merge movies (avoid duplicates by tmdb_id)
-        let existing_tmdb_ids: std::collections::HashSet<_> = self.movies
-            .iter()
-            .filter_map(|m| m.tmdb_id)
-            .collect();
-        
+        let existing_tmdb_ids: std::collections::HashSet<_> =
+            self.movies.iter().filter_map(|m| m.tmdb_id).collect();
+
         for movie in other.movies {
             if let Some(tmdb_id) = movie.tmdb_id {
                 if !existing_tmdb_ids.contains(&tmdb_id) {
@@ -524,13 +538,11 @@ impl CentralIndex {
                 self.movies.push(movie);
             }
         }
-        
+
         // Merge TV shows
-        let existing_tvshow_ids: std::collections::HashSet<_> = self.tvshows
-            .iter()
-            .filter_map(|t| t.tmdb_id)
-            .collect();
-        
+        let existing_tvshow_ids: std::collections::HashSet<_> =
+            self.tvshows.iter().filter_map(|t| t.tmdb_id).collect();
+
         for tvshow in other.tvshows {
             if let Some(tmdb_id) = tvshow.tmdb_id {
                 if !existing_tvshow_ids.contains(&tmdb_id) {
@@ -540,16 +552,15 @@ impl CentralIndex {
                 self.tvshows.push(tvshow);
             }
         }
-        
+
         // Merge collections
         for (id, collection) in other.collections {
             self.collections.entry(id).or_insert(collection);
         }
-        
+
         // Rebuild indexes and statistics
         self.rebuild_indexes();
         self.update_statistics();
         self.updated_at = chrono::Utc::now().to_rfc3339();
     }
 }
-

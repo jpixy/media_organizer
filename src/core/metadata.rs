@@ -30,7 +30,7 @@ pub enum MetadataSource {
 }
 
 /// Candidate metadata extracted before TMDB validation.
-/// 
+///
 /// This structure collects all available information from various sources
 /// before querying TMDB for validation and enrichment.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,11 +70,13 @@ impl CandidateMetadata {
 
     /// Get the best title for display.
     pub fn display_title(&self) -> Option<String> {
-        self.chinese_title.clone().or_else(|| self.english_title.clone())
+        self.chinese_title
+            .clone()
+            .or_else(|| self.english_title.clone())
     }
 
     /// Check if AI parsing is needed.
-    /// 
+    ///
     /// AI parsing is needed when:
     /// - No title found from filename/directory
     /// - Title looks like codec/technical info
@@ -113,7 +115,7 @@ impl CandidateMetadata {
 }
 
 /// Directory type classification.
-/// 
+///
 /// Used to understand the semantic meaning of directory names
 /// in the video file path.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,51 +174,49 @@ pub struct OrganizedInfo {
 }
 
 /// Classify a directory name to determine its type.
-/// 
+///
 /// This function analyzes directory names to understand their semantic meaning,
 /// which helps in extracting metadata from the file path.
 pub fn classify_directory(dirname: &str) -> DirectoryType {
     let name = dirname.trim();
-    
+
     // Check if it's an organized directory first
     if let Some(info) = parse_organized_directory(name) {
         return DirectoryType::OrganizedDirectory(info);
     }
-    
+
     // Check if it's a season directory
     if let Some(season) = extract_season_number(name) {
         return DirectoryType::SeasonDirectory(season);
     }
-    
+
     // Check if it's a quality/technical directory
     if is_quality_directory(name) {
         return DirectoryType::QualityDirectory;
     }
-    
+
     // Check if it's a category directory
     if let Some(category) = classify_as_category(name) {
         return DirectoryType::CategoryDirectory(category);
     }
-    
+
     // Check if it's a title directory
     if let Some(title_info) = extract_title_from_dirname(name) {
         return DirectoryType::TitleDirectory(title_info);
     }
-    
+
     DirectoryType::Unknown
 }
 
 /// Parse an organized directory format.
-/// 
+///
 /// Formats:
 /// - `[Title](Year)-ttIMDB-tmdbID`
 /// - `[Title](Year)-tmdbID`
 fn parse_organized_directory(name: &str) -> Option<OrganizedInfo> {
     // Pattern with IMDB: [Title](Year)-ttIMDB-tmdbID
-    let re_with_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_with_imdb = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_with_imdb.captures(name) {
         return Some(OrganizedInfo {
             title: caps.get(1)?.as_str().to_string(),
@@ -225,12 +225,10 @@ fn parse_organized_directory(name: &str) -> Option<OrganizedInfo> {
             tmdb_id: caps.get(4)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern without IMDB: [Title](Year)-tmdbID
-    let re_no_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_no_imdb = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_no_imdb.captures(name) {
         return Some(OrganizedInfo {
             title: caps.get(1)?.as_str().to_string(),
@@ -239,28 +237,40 @@ fn parse_organized_directory(name: &str) -> Option<OrganizedInfo> {
             tmdb_id: caps.get(3)?.as_str().parse().ok()?,
         });
     }
-    
+
     None
 }
 
 /// Extract season number from directory name.
 fn extract_season_number(name: &str) -> Option<u16> {
     let name_lower = name.to_lowercase();
-    
+
     // Chinese numeral to number mapping
     let chinese_nums = [
-        ("一", 1), ("二", 2), ("三", 3), ("四", 4), ("五", 5),
-        ("六", 6), ("七", 7), ("八", 8), ("九", 9), ("十", 10),
-        ("十一", 11), ("十二", 12), ("十三", 13), ("十四", 14), ("十五", 15),
+        ("一", 1),
+        ("二", 2),
+        ("三", 3),
+        ("四", 4),
+        ("五", 5),
+        ("六", 6),
+        ("七", 7),
+        ("八", 8),
+        ("九", 9),
+        ("十", 10),
+        ("十一", 11),
+        ("十二", 12),
+        ("十三", 13),
+        ("十四", 14),
+        ("十五", 15),
     ];
-    
+
     // Pattern: "第X季" or "第X部" with Chinese numerals
     for (cn, num) in &chinese_nums {
         if name.contains(&format!("第{}季", cn)) || name.contains(&format!("第{}部", cn)) {
             return Some(*num);
         }
     }
-    
+
     // Pattern: "第N季" with Arabic numerals
     if let Ok(re) = regex::Regex::new(r"第(\d{1,2})季") {
         if let Some(caps) = re.captures(name) {
@@ -269,7 +279,7 @@ fn extract_season_number(name: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern: "Season N", "Season 0N"
     if let Ok(re) = regex::Regex::new(r"(?i)^season\s*(\d{1,2})$") {
         if let Some(caps) = re.captures(&name_lower) {
@@ -278,7 +288,7 @@ fn extract_season_number(name: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern: "S01", "S1" (standalone)
     if let Ok(re) = regex::Regex::new(r"(?i)^s(\d{1,2})$") {
         if let Some(caps) = re.captures(&name_lower) {
@@ -287,24 +297,47 @@ fn extract_season_number(name: &str) -> Option<u16> {
             }
         }
     }
-    
+
     None
 }
 
 /// Check if directory name is a quality/technical directory.
 fn is_quality_directory(name: &str) -> bool {
     let name_lower = name.to_lowercase();
-    
+
     // Resolution patterns
     let quality_patterns = [
-        "4k", "2160p", "1080p", "720p", "480p", "uhd",
-        "bluray", "blu-ray", "bdrip", "brrip", "dvdrip", "hdtv",
-        "web-dl", "webdl", "webrip", "hdrip",
-        "内封字幕", "外挂字幕", "中字", "内嵌字幕",
-        "hevc", "x265", "h265", "x264", "h264",
-        "remux", "dts", "truehd", "atmos",
+        "4k",
+        "2160p",
+        "1080p",
+        "720p",
+        "480p",
+        "uhd",
+        "bluray",
+        "blu-ray",
+        "bdrip",
+        "brrip",
+        "dvdrip",
+        "hdtv",
+        "web-dl",
+        "webdl",
+        "webrip",
+        "hdrip",
+        "内封字幕",
+        "外挂字幕",
+        "中字",
+        "内嵌字幕",
+        "hevc",
+        "x265",
+        "h265",
+        "x264",
+        "h264",
+        "remux",
+        "dts",
+        "truehd",
+        "atmos",
     ];
-    
+
     for pattern in &quality_patterns {
         if name_lower == *pattern || name_lower.contains(pattern) {
             // Make sure it's primarily a quality descriptor
@@ -313,7 +346,7 @@ fn is_quality_directory(name: &str) -> bool {
             }
         }
     }
-    
+
     false
 }
 
@@ -321,22 +354,36 @@ fn is_quality_directory(name: &str) -> bool {
 fn classify_as_category(name: &str) -> Option<CategoryType> {
     // Region patterns (Chinese names for drama regions)
     let region_patterns = [
-        ("韩剧", "KR"), ("韩国", "KR"), ("韩影", "KR"),
-        ("美剧", "US"), ("美国", "US"), ("美影", "US"),
-        ("日剧", "JP"), ("日本", "JP"), ("日影", "JP"), ("日番", "JP"),
-        ("英剧", "GB"), ("英国", "GB"),
-        ("国产剧", "CN"), ("国产", "CN"), ("大陆", "CN"), ("内地", "CN"),
-        ("港剧", "HK"), ("香港", "HK"),
-        ("台剧", "TW"), ("台湾", "TW"),
-        ("泰剧", "TH"), ("泰国", "TH"),
+        ("韩剧", "KR"),
+        ("韩国", "KR"),
+        ("韩影", "KR"),
+        ("美剧", "US"),
+        ("美国", "US"),
+        ("美影", "US"),
+        ("日剧", "JP"),
+        ("日本", "JP"),
+        ("日影", "JP"),
+        ("日番", "JP"),
+        ("英剧", "GB"),
+        ("英国", "GB"),
+        ("国产剧", "CN"),
+        ("国产", "CN"),
+        ("大陆", "CN"),
+        ("内地", "CN"),
+        ("港剧", "HK"),
+        ("香港", "HK"),
+        ("台剧", "TW"),
+        ("台湾", "TW"),
+        ("泰剧", "TH"),
+        ("泰国", "TH"),
     ];
-    
+
     for (pattern, code) in &region_patterns {
         if name.contains(pattern) || name == *pattern {
             return Some(CategoryType::Region(code.to_string()));
         }
     }
-    
+
     // Year patterns
     if let Ok(re) = regex::Regex::new(r"^(\d{4})(?:年)?(?:新番)?$") {
         if let Some(caps) = re.captures(name) {
@@ -347,36 +394,55 @@ fn classify_as_category(name: &str) -> Option<CategoryType> {
             }
         }
     }
-    
+
     // Genre patterns
     let genre_patterns = [
-        "电影", "电视剧", "剧集", "综艺", "动漫", "动画", "纪录片",
-        "movies", "tvshows", "tv shows", "anime", "documentary",
+        "电影",
+        "电视剧",
+        "剧集",
+        "综艺",
+        "动漫",
+        "动画",
+        "纪录片",
+        "movies",
+        "tvshows",
+        "tv shows",
+        "anime",
+        "documentary",
     ];
-    
+
     for pattern in &genre_patterns {
         if name.to_lowercase().contains(pattern) {
             return Some(CategoryType::Genre(pattern.to_string()));
         }
     }
-    
+
     // Series/Collection patterns
     let series_patterns = [
-        "漫威", "marvel", "dc", "星球大战", "star wars", "哈利波特", "harry potter",
-        "指环王", "lord of the rings", "变形金刚", "transformers",
+        "漫威",
+        "marvel",
+        "dc",
+        "星球大战",
+        "star wars",
+        "哈利波特",
+        "harry potter",
+        "指环王",
+        "lord of the rings",
+        "变形金刚",
+        "transformers",
     ];
-    
+
     for pattern in &series_patterns {
         if name.to_lowercase().contains(pattern) {
             return Some(CategoryType::Series(pattern.to_string()));
         }
     }
-    
+
     None
 }
 
 /// Extract title information from directory name.
-/// 
+///
 /// Title directory formats:
 /// - `中文标题 English Title (2024)`
 /// - `中文标题 (2024)`
@@ -387,15 +453,15 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
     if name.len() < 2 {
         return None;
     }
-    
+
     // Pattern: Title (Year)
     if let Ok(re) = regex::Regex::new(r"^(.+?)\s*[\(\[（](\d{4})[\)\]）]$") {
         if let Some(caps) = re.captures(name) {
             let title_part = caps.get(1)?.as_str().trim();
             let year: u16 = caps.get(2)?.as_str().parse().ok()?;
-            
+
             let (chinese, english) = split_chinese_english_title(title_part);
-            
+
             return Some(TitleInfo {
                 chinese_title: chinese,
                 english_title: english,
@@ -403,17 +469,17 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
             });
         }
     }
-    
+
     // Pattern: Title.Year (dots as separators)
     if let Ok(re) = regex::Regex::new(r"^(.+?)\.(\d{4})(?:\.|$)") {
         if let Some(caps) = re.captures(name) {
             let title_part = caps.get(1)?.as_str().replace('.', " ").trim().to_string();
             let year: u16 = caps.get(2)?.as_str().parse().ok()?;
-            
+
             // Check if title looks like a real title (not just technical info)
             if !is_quality_directory(&title_part) {
                 let (chinese, english) = split_chinese_english_title(&title_part);
-                
+
                 return Some(TitleInfo {
                     chinese_title: chinese,
                     english_title: english,
@@ -422,14 +488,14 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
             }
         }
     }
-    
+
     // Pattern: Just a title without year (if it has Chinese characters)
     let has_chinese = name.chars().any(|c| {
         let u = c as u32;
         (0x4E00..=0x9FFF).contains(&u) || // CJK Unified Ideographs
-        (0x3400..=0x4DBF).contains(&u)    // CJK Extension A
+        (0x3400..=0x4DBF).contains(&u) // CJK Extension A
     });
-    
+
     if has_chinese && name.len() >= 2 {
         let (chinese, english) = split_chinese_english_title(name);
         if chinese.is_some() || english.is_some() {
@@ -440,7 +506,7 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
             });
         }
     }
-    
+
     None
 }
 
@@ -448,34 +514,43 @@ fn extract_title_from_dirname(name: &str) -> Option<TitleInfo> {
 fn split_chinese_english_title(title: &str) -> (Option<String>, Option<String>) {
     let mut chinese_chars = String::new();
     let mut english_chars = String::new();
-    
+
     for c in title.chars() {
         let u = c as u32;
         if (0x4E00..=0x9FFF).contains(&u) || // CJK Unified Ideographs
            (0x3400..=0x4DBF).contains(&u) || // CJK Extension A
-           c == '：' || c == '·' {
+           c == '：' || c == '·'
+        {
             chinese_chars.push(c);
         } else if c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '\'' || c == ':' {
             english_chars.push(c);
         }
     }
-    
+
     let chinese = chinese_chars.trim().to_string();
     let english = english_chars.trim().to_string();
-    
+
     (
-        if chinese.is_empty() { None } else { Some(chinese) },
-        if english.is_empty() { None } else { Some(english) },
+        if chinese.is_empty() {
+            None
+        } else {
+            Some(chinese)
+        },
+        if english.is_empty() {
+            None
+        } else {
+            Some(english)
+        },
     )
 }
 
 /// Find the first TitleDirectory or OrganizedDirectory by traversing up from a path.
-/// 
+///
 /// This is useful for files in nested directory structures like:
 /// `Movies/漫威/复仇者联盟 (2012)/1080p/movie.mkv`
 pub fn find_title_directory(path: &Path) -> Option<(DirectoryType, std::path::PathBuf)> {
     let mut current = path.to_path_buf();
-    
+
     while let Some(parent) = current.parent() {
         if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
             let dir_type = classify_directory(name);
@@ -488,12 +563,12 @@ pub fn find_title_directory(path: &Path) -> Option<(DirectoryType, std::path::Pa
         }
         current = parent.to_path_buf();
     }
-    
+
     None
 }
 
 /// Extract metadata from filename using regex (no AI).
-/// 
+///
 /// This function extracts information from common filename patterns:
 /// - Episode numbers (S01E01, E01, 01, 第1集)
 /// - Year (2024)
@@ -505,7 +580,7 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
         confidence: 0.5,
         ..Default::default()
     };
-    
+
     // Remove extension
     let name = filename
         .rsplit('.')
@@ -515,12 +590,12 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
         .rev()
         .collect::<Vec<_>>()
         .join(".");
-    
+
     // Extract episode info
     let (season, episode) = super::parser::extract_episode_from_filename(filename);
     metadata.season = season;
     metadata.episode = episode;
-    
+
     // Extract year from filename
     if let Ok(re) = regex::Regex::new(r"[\.\s\-_\(\[](\d{4})[\.\s\-_\)\]]") {
         if let Some(caps) = re.captures(&name) {
@@ -531,7 +606,7 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
             }
         }
     }
-    
+
     // Try to extract title (before year or technical info)
     // Pattern: "Title.Year" or "Title (Year)" or "Title 1080p"
     if let Ok(re) = regex::Regex::new(r"^([^\.]+?)[\.\s]*(?:\d{4}|1080p|720p|4k|2160p)") {
@@ -544,7 +619,7 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
             }
         }
     }
-    
+
     // Extract IMDB ID from filename (format: tt1234567 or tt12345678)
     if let Ok(re) = regex::Regex::new(r"(tt\d{7,8})") {
         if let Some(caps) = re.captures(&name) {
@@ -553,12 +628,12 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
             }
         }
     }
-    
+
     // If we found episode but no title, we need AI
     if metadata.episode.is_some() && !metadata.has_searchable_info() {
         metadata.needs_ai_parsing = true;
     }
-    
+
     // Increase confidence if we extracted useful info
     if metadata.has_searchable_info() {
         metadata.confidence = 0.7;
@@ -570,28 +645,28 @@ pub fn extract_from_filename(filename: &str) -> CandidateMetadata {
     if metadata.imdb_id.is_some() {
         metadata.confidence = 0.95;
     }
-    
+
     metadata
 }
 
 /// Extract IMDB/TMDB IDs from a file path (checks filename and all parent directories).
-/// 
+///
 /// This is the highest priority check - if we find an ID anywhere in the path,
 /// we should use it directly without AI parsing.
-/// 
+///
 /// Returns (tmdb_id, imdb_id)
 pub fn extract_ids_from_path(path: &std::path::Path) -> (Option<u64>, Option<String>) {
     extract_ids_from_path_starting_at(path, path)
 }
 
 /// Extract IMDB/TMDB IDs starting from a specific directory level.
-/// 
+///
 /// This allows skipping certain directories (e.g., when a season directory has an invalid ID
 /// and we want to check the parent show directory instead).
-/// 
+///
 /// - `file_path`: The original file path (for filename checking)
 /// - `start_dir`: The directory to start the parent walk from
-/// 
+///
 /// Returns (tmdb_id, imdb_id)
 pub fn extract_ids_from_path_starting_at(
     file_path: &std::path::Path,
@@ -599,14 +674,14 @@ pub fn extract_ids_from_path_starting_at(
 ) -> (Option<u64>, Option<String>) {
     let mut tmdb_id: Option<u64> = None;
     let mut imdb_id: Option<String> = None;
-    
+
     // Regex patterns
     let imdb_re = regex::Regex::new(r"(tt\d{7,8})").ok();
     let tmdb_re = regex::Regex::new(r"tmdb(\d+)").ok();
     // Also match plain numeric IDs at the end of organized folders: -IMDB-TMDB format
     // e.g., "2004-[Title]-[Title]-tt0372183-2502" -> TMDB is 2502
     let legacy_format_re = regex::Regex::new(r"-tt(\d+)-(\d+)$").ok();
-    
+
     // Check filename first (only if starting from the file's own path)
     if file_path == start_dir {
         if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
@@ -622,7 +697,7 @@ pub fn extract_ids_from_path_starting_at(
             }
         }
     }
-    
+
     // Check parent directories (walk up the path from start_dir)
     let mut current = start_dir.parent();
     while let Some(dir) = current {
@@ -635,7 +710,7 @@ pub fn extract_ids_from_path_starting_at(
                     }
                 }
             }
-            
+
             // Check for TMDB ID (format: tmdb12345)
             if tmdb_id.is_none() {
                 if let Some(ref re) = tmdb_re {
@@ -644,7 +719,7 @@ pub fn extract_ids_from_path_starting_at(
                     }
                 }
             }
-            
+
             // Check for legacy format: -tt0372183-2502 (IMDB-TMDB at the end)
             if tmdb_id.is_none() {
                 if let Some(ref re) = legacy_format_re {
@@ -657,20 +732,23 @@ pub fn extract_ids_from_path_starting_at(
                 }
             }
         }
-        
+
         // Stop if we found both IDs
         if tmdb_id.is_some() && imdb_id.is_some() {
             break;
         }
-        
+
         current = dir.parent();
     }
-    
+
     (tmdb_id, imdb_id)
 }
 
 /// Merge metadata from filename and directory, with filename taking priority.
-pub fn merge_info(filename_info: CandidateMetadata, dir_info: CandidateMetadata) -> CandidateMetadata {
+pub fn merge_info(
+    filename_info: CandidateMetadata,
+    dir_info: CandidateMetadata,
+) -> CandidateMetadata {
     CandidateMetadata {
         chinese_title: filename_info.chinese_title.or(dir_info.chinese_title),
         english_title: filename_info.english_title.or(dir_info.english_title),
@@ -686,4 +764,3 @@ pub fn merge_info(filename_info: CandidateMetadata, dir_info: CandidateMetadata)
 }
 
 // Integration tests moved to tests/metadata_tests.rs
-

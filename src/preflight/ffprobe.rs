@@ -18,6 +18,3 @@ pub fn check() -> CheckResult {
         )
     }
 }
-
-
-

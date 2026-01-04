@@ -78,24 +78,16 @@ pub fn extract_metadata(path: &Path) -> Result<VideoMetadata> {
     let ffprobe: FfprobeOutput = serde_json::from_slice(&output.stdout)?;
 
     // Find video stream
-    let video_stream = ffprobe
-        .streams
-        .iter()
-        .find(|s| s.codec_type == "video");
+    let video_stream = ffprobe.streams.iter().find(|s| s.codec_type == "video");
 
     // Find audio stream
-    let audio_stream = ffprobe
-        .streams
-        .iter()
-        .find(|s| s.codec_type == "audio");
+    let audio_stream = ffprobe.streams.iter().find(|s| s.codec_type == "audio");
 
     // Extract resolution
     let resolution = video_stream
-        .and_then(|s| {
-            match (s.width, s.height) {
-                (Some(w), Some(h)) => Some(resolution_to_string(w, h)),
-                _ => None,
-            }
+        .and_then(|s| match (s.width, s.height) {
+            (Some(w), Some(h)) => Some(resolution_to_string(w, h)),
+            _ => None,
         })
         .unwrap_or_else(|| "unknown".to_string());
 
@@ -186,7 +178,7 @@ fn detect_format(format_name: &str, path: &Path) -> String {
 /// This serves as a fallback when ffprobe fails or to supplement ffprobe data.
 pub fn parse_metadata_from_filename(filename: &str) -> VideoMetadata {
     let filename_lower = filename.to_lowercase();
-    
+
     VideoMetadata {
         resolution: parse_resolution_from_filename(&filename_lower),
         format: parse_format_from_filename(&filename_lower),
@@ -221,14 +213,14 @@ fn parse_resolution_from_filename(filename: &str) -> String {
         ("576p", "576p"),
         ("dvd", "480p"),
     ];
-    
+
     for (pattern, resolution) in patterns {
         // Use word boundary matching to avoid false positives
         if filename.contains(pattern) {
             return resolution.to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -263,13 +255,13 @@ fn parse_format_from_filename(filename: &str) -> String {
         ("ts", "TS"),
         ("tc", "TC"),
     ];
-    
+
     for (pattern, format) in patterns {
         if filename.contains(pattern) {
             return format.to_string();
         }
     }
-    
+
     "Unknown".to_string()
 }
 
@@ -289,13 +281,13 @@ fn parse_video_codec_from_filename(filename: &str) -> String {
         ("xvid", "xvid"),
         ("divx", "divx"),
     ];
-    
+
     for (pattern, codec) in patterns {
         if filename.contains(pattern) {
             return codec.to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -307,7 +299,10 @@ fn parse_bit_depth_from_filename(filename: &str) -> u8 {
         12
     } else if filename.contains("8bit") || filename.contains("8-bit") {
         8
-    } else if filename.contains("hdr") || filename.contains("dolby vision") || filename.contains("dv") {
+    } else if filename.contains("hdr")
+        || filename.contains("dolby vision")
+        || filename.contains("dv")
+    {
         10 // HDR content is typically 10-bit
     } else {
         8 // Default to 8-bit
@@ -335,13 +330,13 @@ fn parse_audio_codec_from_filename(filename: &str) -> String {
         ("opus", "Opus"),
         ("mp3", "MP3"),
     ];
-    
+
     for (pattern, codec) in patterns {
         if filename.contains(pattern) {
             return codec.to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -355,25 +350,49 @@ fn parse_audio_channels_from_filename(filename: &str) -> String {
         ("stereo", "2.0"),
         ("mono", "1.0"),
     ];
-    
+
     for (pattern, channels) in patterns {
         if filename.contains(pattern) {
             return channels.to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
 /// Merge two VideoMetadata, preferring values from primary, falling back to secondary.
 pub fn merge_metadata(primary: VideoMetadata, secondary: VideoMetadata) -> VideoMetadata {
     VideoMetadata {
-        resolution: if primary.resolution != "unknown" { primary.resolution } else { secondary.resolution },
-        format: if primary.format != "Unknown" { primary.format } else { secondary.format },
-        video_codec: if primary.video_codec != "unknown" { primary.video_codec } else { secondary.video_codec },
-        bit_depth: if primary.bit_depth != 8 || secondary.bit_depth == 8 { primary.bit_depth } else { secondary.bit_depth },
-        audio_codec: if primary.audio_codec != "unknown" { primary.audio_codec } else { secondary.audio_codec },
-        audio_channels: if primary.audio_channels != "unknown" { primary.audio_channels } else { secondary.audio_channels },
+        resolution: if primary.resolution != "unknown" {
+            primary.resolution
+        } else {
+            secondary.resolution
+        },
+        format: if primary.format != "Unknown" {
+            primary.format
+        } else {
+            secondary.format
+        },
+        video_codec: if primary.video_codec != "unknown" {
+            primary.video_codec
+        } else {
+            secondary.video_codec
+        },
+        bit_depth: if primary.bit_depth != 8 || secondary.bit_depth == 8 {
+            primary.bit_depth
+        } else {
+            secondary.bit_depth
+        },
+        audio_codec: if primary.audio_codec != "unknown" {
+            primary.audio_codec
+        } else {
+            secondary.audio_codec
+        },
+        audio_channels: if primary.audio_channels != "unknown" {
+            primary.audio_channels
+        } else {
+            secondary.audio_channels
+        },
     }
 }
 
@@ -384,23 +403,47 @@ mod filename_parser_tests {
     #[test]
     fn test_parse_resolution() {
         // Note: These functions expect lowercase input (called via parse_metadata_from_filename)
-        assert_eq!(parse_resolution_from_filename("movie.2024.4k.bluray.mkv"), "2160p");
-        assert_eq!(parse_resolution_from_filename("movie.2024.2160p.web-dl.mkv"), "2160p");
-        assert_eq!(parse_resolution_from_filename("movie.2024.1080p.bluray.mkv"), "1080p");
-        assert_eq!(parse_resolution_from_filename("movie.2024.720p.hdtv.mkv"), "720p");
+        assert_eq!(
+            parse_resolution_from_filename("movie.2024.4k.bluray.mkv"),
+            "2160p"
+        );
+        assert_eq!(
+            parse_resolution_from_filename("movie.2024.2160p.web-dl.mkv"),
+            "2160p"
+        );
+        assert_eq!(
+            parse_resolution_from_filename("movie.2024.1080p.bluray.mkv"),
+            "1080p"
+        );
+        assert_eq!(
+            parse_resolution_from_filename("movie.2024.720p.hdtv.mkv"),
+            "720p"
+        );
         assert_eq!(parse_resolution_from_filename("电影.4k.mp4"), "2160p");
     }
 
     #[test]
     fn test_parse_format() {
         // Note: These functions expect lowercase input
-        assert_eq!(parse_format_from_filename("movie.2024.bluray.mkv"), "BluRay");
-        assert_eq!(parse_format_from_filename("movie.2024.web-dl.mkv"), "WEB-DL");
+        assert_eq!(
+            parse_format_from_filename("movie.2024.bluray.mkv"),
+            "BluRay"
+        );
+        assert_eq!(
+            parse_format_from_filename("movie.2024.web-dl.mkv"),
+            "WEB-DL"
+        );
         assert_eq!(parse_format_from_filename("movie.2024.hdtv.mkv"), "HDTV");
         // "web-dl" is matched first (order priority), so AMZN prefix is not returned
-        assert_eq!(parse_format_from_filename("movie.amzn.web-dl.mkv"), "WEB-DL");
+        assert_eq!(
+            parse_format_from_filename("movie.amzn.web-dl.mkv"),
+            "WEB-DL"
+        );
         // AMZN is matched when there's no explicit web-dl
-        assert_eq!(parse_format_from_filename("movie.amzn.1080p.mkv"), "AMZN.WEB-DL");
+        assert_eq!(
+            parse_format_from_filename("movie.amzn.1080p.mkv"),
+            "AMZN.WEB-DL"
+        );
     }
 
     #[test]
@@ -414,9 +457,15 @@ mod filename_parser_tests {
     #[test]
     fn test_parse_audio() {
         // Note: These functions expect lowercase input
-        assert_eq!(parse_audio_codec_from_filename("movie.dts-hd.ma.mkv"), "DTS-HD.MA");
+        assert_eq!(
+            parse_audio_codec_from_filename("movie.dts-hd.ma.mkv"),
+            "DTS-HD.MA"
+        );
         // "truehd" is matched first (order priority), "atmos" suffix is separate pattern
-        assert_eq!(parse_audio_codec_from_filename("movie.truehd.atmos.mkv"), "TrueHD");
+        assert_eq!(
+            parse_audio_codec_from_filename("movie.truehd.atmos.mkv"),
+            "TrueHD"
+        );
         assert_eq!(parse_audio_codec_from_filename("movie.dd5.1.mkv"), "AC3");
     }
 }

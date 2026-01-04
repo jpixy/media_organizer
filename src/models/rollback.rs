@@ -69,6 +69,3 @@ pub enum RollbackActionType {
     /// Delete a created file.
     Delete,
 }
-
-
-

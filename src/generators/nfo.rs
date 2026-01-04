@@ -1,6 +1,6 @@
 //! NFO file generator (Kodi compatible).
 
-use crate::models::media::{MovieMetadata, TvShowMetadata, EpisodeMetadata};
+use crate::models::media::{EpisodeMetadata, MovieMetadata, TvShowMetadata};
 
 /// Generate movie NFO content (Kodi/Emby/Jellyfin compatible).
 pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
@@ -113,7 +113,10 @@ pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
 
     // Thumb/Poster
     for poster_url in &movie.poster_urls {
-        nfo.push_str(&format!("  <thumb aspect=\"poster\">{}</thumb>\n", escape_xml(poster_url)));
+        nfo.push_str(&format!(
+            "  <thumb aspect=\"poster\">{}</thumb>\n",
+            escape_xml(poster_url)
+        ));
     }
 
     // Fanart/Backdrop
@@ -126,9 +129,15 @@ pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
     // Collection/Set (for movie series like "Pirates of the Caribbean")
     if let Some(ref collection_name) = movie.collection_name {
         nfo.push_str("  <set>\n");
-        nfo.push_str(&format!("    <name>{}</name>\n", escape_xml(collection_name)));
+        nfo.push_str(&format!(
+            "    <name>{}</name>\n",
+            escape_xml(collection_name)
+        ));
         if let Some(ref overview) = movie.collection_overview {
-            nfo.push_str(&format!("    <overview>{}</overview>\n", escape_xml(overview)));
+            nfo.push_str(&format!(
+                "    <overview>{}</overview>\n",
+                escape_xml(overview)
+            ));
         }
         // Total movies in collection (for collection completeness tracking)
         if let Some(total) = movie.collection_total_movies {
@@ -136,10 +145,13 @@ pub fn generate_movie_nfo(movie: &MovieMetadata) -> String {
         }
         nfo.push_str("  </set>\n");
     }
-    
+
     // TMDB Collection ID (for Kodi/Emby/Jellyfin to fetch collection artwork)
     if let Some(collection_id) = movie.collection_id {
-        nfo.push_str(&format!("  <tmdbcollectionid>{}</tmdbcollectionid>\n", collection_id));
+        nfo.push_str(&format!(
+            "  <tmdbcollectionid>{}</tmdbcollectionid>\n",
+            collection_id
+        ));
     }
 
     nfo.push_str("</movie>\n");
@@ -171,7 +183,10 @@ pub fn generate_tvshow_nfo(show: &TvShowMetadata) -> String {
         nfo.push_str(&format!("  <status>{}</status>\n", escape_xml(status)));
     }
     nfo.push_str(&format!("  <season>{}</season>\n", show.number_of_seasons));
-    nfo.push_str(&format!("  <episode>{}</episode>\n", show.number_of_episodes));
+    nfo.push_str(&format!(
+        "  <episode>{}</episode>\n",
+        show.number_of_episodes
+    ));
 
     // Ratings
     if let Some(rating) = show.rating {
@@ -280,7 +295,10 @@ pub fn generate_episode_nfo(show: &TvShowMetadata, episode: &EpisodeMetadata) ->
 
     // Season and episode
     nfo.push_str(&format!("  <season>{}</season>\n", episode.season_number));
-    nfo.push_str(&format!("  <episode>{}</episode>\n", episode.episode_number));
+    nfo.push_str(&format!(
+        "  <episode>{}</episode>\n",
+        episode.episode_number
+    ));
 
     // Air date
     if let Some(ref air_date) = episode.air_date {
@@ -331,6 +349,3 @@ mod tests {
         assert!(nfo.contains("tt0499549"));
     }
 }
-
-
-

@@ -352,3 +352,4 @@ ffprobe -v quiet -print_format json -show_streams -show_format /path/to/video.mp
 | 文件操作失败 | 中断执行，保留 rollback 记录 |
 | 目标路径冲突 | Plan 阶段检测并报错 |
 
+

@@ -74,7 +74,11 @@ impl RollbackExecutor {
                 idx + 1,
                 operations.len(),
                 op.rollback.op,
-                op.rollback.path.file_name().unwrap_or_default().to_string_lossy()
+                op.rollback
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
             );
             pb.set_message(progress_msg.clone());
             pb.inc(1);
@@ -302,7 +306,7 @@ pub fn load_rollback(path: &Path) -> Result<Rollback> {
 /// Save a rollback to a JSON file.
 pub fn save_rollback(rollback: &Rollback, path: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(rollback)?;
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -339,5 +343,3 @@ mod tests {
 
     // test_load_save_rollback moved to tests/io_tests.rs
 }
-
-

@@ -9,7 +9,9 @@
 use crate::generators::nfo;
 use crate::models::media::MediaType;
 use crate::models::plan::{Operation, OperationType, Plan, PlanItem, PlanItemStatus};
-use crate::models::rollback::{Rollback, RollbackAction, RollbackActionType, RollbackOpType, RollbackOperation};
+use crate::models::rollback::{
+    Rollback, RollbackAction, RollbackActionType, RollbackOpType, RollbackOperation,
+};
 use crate::utils::hash;
 use crate::Result;
 use chrono::Utc;
@@ -124,14 +126,19 @@ impl Executor {
             op_idx += 1;
             pb.set_message(format!(
                 "[{}/{}] {:?}: {}",
-                op_idx, total_ops, op.op,
+                op_idx,
+                total_ops,
+                op.op,
                 op.to.file_name().unwrap_or_default().to_string_lossy()
             ));
             pb.inc(1);
 
             tracing::info!(
                 "Execute [{}/{}]: {:?} - {}",
-                op_idx, total_ops, op.op, op.to.display()
+                op_idx,
+                total_ops,
+                op.op,
+                op.to.display()
             );
 
             match self.execute_operation(op, item, plan).await {
@@ -155,9 +162,9 @@ impl Executor {
         // Phase 2: Execute downloads in parallel (up to 4 concurrent)
         if !download_ops.is_empty() {
             tracing::info!("Downloading {} posters in parallel...", download_ops.len());
-            
+
             const DOWNLOAD_CONCURRENCY: usize = 4;
-            
+
             let download_results: Vec<_> = stream::iter(download_ops.iter())
                 .map(|(op, _item)| {
                     let client = &self.http_client;
@@ -176,7 +183,8 @@ impl Executor {
                 op_idx += 1;
                 pb.set_message(format!(
                     "[{}/{}] Downloaded: {}",
-                    op_idx, total_ops,
+                    op_idx,
+                    total_ops,
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
                 pb.inc(1);
@@ -273,7 +281,7 @@ impl Executor {
     }
 
     /// Validate a plan before execution.
-    /// 
+    ///
     /// Supports resuming interrupted executions:
     /// - If source missing but target exists → already completed, will skip
     /// - If source missing and target missing → real error
@@ -307,17 +315,19 @@ impl Executor {
             }
 
             // Check for target conflicts (source exists but target also exists)
-            if source_exists && target_exists
-                && !self.config.backup_on_overwrite {
-                    errors.push(format!(
-                        "Target file already exists: {}",
-                        item.target.full_path.display()
-                    ));
-                }
+            if source_exists && target_exists && !self.config.backup_on_overwrite {
+                errors.push(format!(
+                    "Target file already exists: {}",
+                    item.target.full_path.display()
+                ));
+            }
         }
 
         if already_done > 0 {
-            println!("[INFO] {} items already completed (will be skipped)", already_done);
+            println!(
+                "[INFO] {} items already completed (will be skipped)",
+                already_done
+            );
         }
 
         if !errors.is_empty() {
@@ -325,9 +335,10 @@ impl Executor {
             for error in &errors {
                 println!("  - {}", error);
             }
-            return Err(crate::Error::PlanValidationError(
-                format!("{} errors found", errors.len())
-            ));
+            return Err(crate::Error::PlanValidationError(format!(
+                "{} errors found",
+                errors.len()
+            )));
         }
 
         println!("{}", "[OK] Validation passed".green());
@@ -377,11 +388,11 @@ impl Executor {
     }
 
     /// Execute move operation.
-    /// 
+    ///
     /// Optimization: For same-filesystem moves (rename), skip checksum verification
     /// since rename is atomic and doesn't copy data. Only verify for cross-filesystem
     /// moves which require actual data copy.
-    /// 
+    ///
     /// Supports resume after interruption with proper state detection:
     /// - (from=no, to=yes): Already completed → skip
     /// - (from=yes, to=yes): Interrupted cross-fs copy → verify and complete
@@ -408,7 +419,7 @@ impl Executor {
                 // Compare file sizes to determine if copy was complete
                 let from_size = fs::metadata(from).map(|m| m.len()).unwrap_or(0);
                 let to_size = fs::metadata(to).map(|m| m.len()).unwrap_or(0);
-                
+
                 if from_size == to_size {
                     // Sizes match - copy was complete, just need to delete source
                     tracing::info!("Resuming interrupted move (deleting source): {:?}", from);
@@ -435,9 +446,10 @@ impl Executor {
             }
             (false, false) => {
                 // Source lost and target doesn't exist
-                return Err(crate::Error::ExecuteError(
-                    format!("Source file not found: {:?}", from)
-                ));
+                return Err(crate::Error::ExecuteError(format!(
+                    "Source file not found: {:?}",
+                    from
+                )));
             }
             (true, false) => {
                 // Normal case: source exists, target doesn't
@@ -476,9 +488,10 @@ impl Executor {
                 tracing::debug!("Cross-filesystem move detected, using copy+delete");
             }
             Err(e) => {
-                return Err(crate::Error::ExecuteError(
-                    format!("Failed to move {:?}: {}", from, e)
-                ));
+                return Err(crate::Error::ExecuteError(format!(
+                    "Failed to move {:?}: {}",
+                    from, e
+                )));
             }
         }
 
@@ -491,7 +504,7 @@ impl Executor {
 
         // Copy file
         fs::copy(from, to)?;
-        
+
         // Verify checksum after copy (only for cross-filesystem)
         if self.config.verify_checksum {
             if let Some(ref original_checksum) = checksum {
@@ -499,9 +512,10 @@ impl Executor {
                 if original_checksum != &new_checksum {
                     // Remove incomplete copy
                     let _ = fs::remove_file(to);
-                    return Err(crate::Error::ExecuteError(
-                        format!("Checksum mismatch after copying: {:?}", to)
-                    ));
+                    return Err(crate::Error::ExecuteError(format!(
+                        "Checksum mismatch after copying: {:?}",
+                        to
+                    )));
                 }
             }
         }
@@ -533,7 +547,7 @@ impl Executor {
         plan: &Plan,
     ) -> Result<Option<RollbackOperation>> {
         let path = &op.to;
-        
+
         // Generate content based on content_ref
         let content = match op.content_ref.as_deref() {
             Some("nfo") => {
@@ -543,49 +557,53 @@ impl Executor {
                             nfo::generate_movie_nfo(metadata)
                         } else {
                             return Err(crate::Error::ExecuteError(
-                                "Missing movie metadata for NFO generation".to_string()
+                                "Missing movie metadata for NFO generation".to_string(),
                             ));
                         }
                     }
                     Some(MediaType::TvShows) => {
                         // Check if this is tvshow.nfo (show-level) or episode.nfo
-                        let is_tvshow_nfo = path.file_name()
+                        let is_tvshow_nfo = path
+                            .file_name()
                             .map(|n| n.to_string_lossy() == "tvshow.nfo")
                             .unwrap_or(false);
-                        
+
                         if is_tvshow_nfo {
                             // Generate show-level NFO
                             if let Some(ref show) = item.tvshow_metadata {
                                 nfo::generate_tvshow_nfo(show)
                             } else {
                                 return Err(crate::Error::ExecuteError(
-                                    "Missing TV show metadata for NFO generation".to_string()
+                                    "Missing TV show metadata for NFO generation".to_string(),
                                 ));
                             }
                         } else {
                             // Generate episode-level NFO
-                            if let (Some(ref show), Some(ref episode)) = (&item.tvshow_metadata, &item.episode_metadata) {
+                            if let (Some(ref show), Some(ref episode)) =
+                                (&item.tvshow_metadata, &item.episode_metadata)
+                            {
                                 nfo::generate_episode_nfo(show, episode)
                             } else if let Some(ref show) = item.tvshow_metadata {
                                 nfo::generate_tvshow_nfo(show)
                             } else {
                                 return Err(crate::Error::ExecuteError(
-                                    "Missing TV show metadata for NFO generation".to_string()
+                                    "Missing TV show metadata for NFO generation".to_string(),
                                 ));
                             }
                         }
                     }
                     None => {
                         return Err(crate::Error::ExecuteError(
-                            "Unknown media type for NFO generation".to_string()
+                            "Unknown media type for NFO generation".to_string(),
                         ));
                     }
                 }
             }
             _ => {
-                return Err(crate::Error::ExecuteError(
-                    format!("Unknown content_ref: {:?}", op.content_ref)
-                ));
+                return Err(crate::Error::ExecuteError(format!(
+                    "Unknown content_ref: {:?}",
+                    op.content_ref
+                )));
             }
         };
 
@@ -644,7 +662,7 @@ impl Executor {
 
         // Download file
         let response = self.http_client.get(url).send().await?;
-        
+
         if !response.status().is_success() {
             tracing::warn!("Failed to download poster: {} - {}", url, response.status());
             return Ok(None);
@@ -691,7 +709,7 @@ pub fn validate_plan(plan: &Plan) -> Result<()> {
 /// Save rollback to a JSON file.
 pub fn save_rollback(rollback: &Rollback, path: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(rollback)?;
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -722,5 +740,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-
-

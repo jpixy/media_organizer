@@ -13,15 +13,14 @@ use crate::core::parser::{self, FilenameParser, ParsedFilename};
 use crate::core::scanner::scan_directory;
 use crate::generators::{filename as gen_filename, folder as gen_folder};
 use crate::models::media::{
-    MediaType, MovieMetadata, TvShowMetadata, EpisodeMetadata, 
-    VideoFile, VideoMetadata
+    EpisodeMetadata, MediaType, MovieMetadata, TvShowMetadata, VideoFile, VideoMetadata,
 };
 use crate::models::plan::{
     Operation, OperationType, ParsedInfo, Plan, PlanItem, PlanItemStatus, SampleItem, TargetInfo,
     UnknownItem,
 };
-use crate::services::tmdb::{Credits, MovieDetails, TmdbClient};
 use crate::services::ffprobe;
+use crate::services::tmdb::{Credits, MovieDetails, TmdbClient};
 use crate::Result;
 use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -34,7 +33,8 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// Cache for season episodes: (tmdb_id, season_number) -> Vec<EpisodeInfo>
-type SeasonEpisodesCache = Arc<RwLock<HashMap<(u64, u16), Vec<crate::services::tmdb::EpisodeInfo>>>>;
+type SeasonEpisodesCache =
+    Arc<RwLock<HashMap<(u64, u16), Vec<crate::services::tmdb::EpisodeInfo>>>>;
 
 /// Convert ISO 3166-1 country code to country name.
 fn country_code_to_name(code: &str) -> String {
@@ -64,7 +64,7 @@ fn country_code_to_name(code: &str) -> String {
         "NO" => "Norway".to_string(),
         "DK" => "Denmark".to_string(),
         "FI" => "Finland".to_string(),
-        _ => code.to_uppercase(),  // Fall back to code if unknown
+        _ => code.to_uppercase(), // Fall back to code if unknown
     }
 }
 
@@ -84,7 +84,7 @@ pub struct PlannerConfig {
 impl Default for PlannerConfig {
     fn default() -> Self {
         Self {
-            min_confidence: 0.7,  // Higher threshold: prefer skipping over wrong matches
+            min_confidence: 0.7, // Higher threshold: prefer skipping over wrong matches
             download_posters: true,
             poster_size: "w500".to_string(),
             generate_nfo: true,
@@ -120,13 +120,13 @@ impl Planner {
         })
     }
 
-/// Generate a plan for organizing videos.
+    /// Generate a plan for organizing videos.
     pub async fn generate(
         &self,
         source: &Path,
         target: &Path,
         media_type: MediaType,
-) -> Result<Plan> {
+    ) -> Result<Plan> {
         tracing::info!("Generating plan for {:?}", source);
         tracing::info!("Target directory: {:?}", target);
         tracing::info!("Media type: {}", media_type);
@@ -176,7 +176,7 @@ impl Planner {
     }
 
     /// Process video files: parse, query TMDB, extract metadata.
-    /// 
+    ///
     /// OPTIMIZED DESIGN:
     /// 1. Group videos by their parent directory
     /// 2. For each group, call AI + TMDB only ONCE for show info
@@ -199,7 +199,11 @@ impl Planner {
 
         // Step 1: Group videos by parent directory
         let groups = self.group_by_top_level_dir(videos, source);
-        tracing::info!("Grouped {} videos into {} directories", videos.len(), groups.len());
+        tracing::info!(
+            "Grouped {} videos into {} directories",
+            videos.len(),
+            groups.len()
+        );
 
         // Caches
         let mut tvshow_cache: HashMap<PathBuf, TvShowMetadata> = HashMap::new();
@@ -231,20 +235,23 @@ impl Planner {
             // Select the best representative video for AI parsing
             // Prioritizes standard SxxExx format, avoids Special files
             let representative_video = Self::select_representative_video(group_videos);
-            pb.set_message(format!("Processing: {} ({} files)", 
+            pb.set_message(format!(
+                "Processing: {} ({} files)",
                 top_dir.file_name().unwrap_or_default().to_string_lossy(),
                 group_videos.len()
             ));
 
             // For the representative video, use AI parsing to get show metadata
-            let first_result = self.process_single_video_optimized(
-                representative_video,
-                target,
-                media_type,
-                cached_show.as_ref(),
-                &season_episodes_cache,
-                ffprobe_map.get(&representative_video.path),
-            ).await;
+            let first_result = self
+                .process_single_video_optimized(
+                    representative_video,
+                    target,
+                    media_type,
+                    cached_show.as_ref(),
+                    &season_episodes_cache,
+                    ffprobe_map.get(&representative_video.path),
+                )
+                .await;
 
             match first_result {
                 Ok(Some((item, show_meta))) => {
@@ -267,23 +274,33 @@ impl Planner {
                     // Skip the representative video (already processed above)
                     let cached_show = tvshow_cache.get(top_dir).cloned();
                     let cached_movie = movie_cache.get(top_dir).cloned();
-                    for video in group_videos.iter().filter(|v| v.path != representative_video.path) {
+                    for video in group_videos
+                        .iter()
+                        .filter(|v| v.path != representative_video.path)
+                    {
                         pb.set_message(format!("Processing: {}", &video.filename));
-                        
+
                         // For movies with cached metadata, use the cached match
                         if media_type == MediaType::Movies {
                             if let Some(ref cached) = cached_movie {
-                                match self.process_sibling_movie(
-                                    video,
-                                    target,
-                                    cached,
-                                    ffprobe_map.get(&video.path),
-                                ).await {
+                                match self
+                                    .process_sibling_movie(
+                                        video,
+                                        target,
+                                        cached,
+                                        ffprobe_map.get(&video.path),
+                                    )
+                                    .await
+                                {
                                     Ok(item) => {
                                         items.push(item);
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Failed to process sibling movie {}: {}", video.filename, e);
+                                        tracing::warn!(
+                                            "Failed to process sibling movie {}: {}",
+                                            video.filename,
+                                            e
+                                        );
                                         unknown.push(UnknownItem {
                                             source: video.clone(),
                                             reason: e.to_string(),
@@ -292,14 +309,17 @@ impl Planner {
                                 }
                             } else {
                                 // No cached movie, process independently
-                                match self.process_single_video_optimized(
-                                    video,
-                                    target,
-                                    media_type,
-                                    None,
-                                    &season_episodes_cache,
-                                    ffprobe_map.get(&video.path),
-                                ).await {
+                                match self
+                                    .process_single_video_optimized(
+                                        video,
+                                        target,
+                                        media_type,
+                                        None,
+                                        &season_episodes_cache,
+                                        ffprobe_map.get(&video.path),
+                                    )
+                                    .await
+                                {
                                     Ok(Some((item, _))) => {
                                         items.push(item);
                                     }
@@ -310,7 +330,11 @@ impl Planner {
                                         });
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Failed to process {}: {}", video.filename, e);
+                                        tracing::warn!(
+                                            "Failed to process {}: {}",
+                                            video.filename,
+                                            e
+                                        );
                                         unknown.push(UnknownItem {
                                             source: video.clone(),
                                             reason: e.to_string(),
@@ -320,14 +344,17 @@ impl Planner {
                             }
                         } else {
                             // For TV shows, use the existing logic with cached show
-                            match self.process_single_video_optimized(
-                                video,
-                                target,
-                                media_type,
-                                cached_show.as_ref(),
-                                &season_episodes_cache,
-                                ffprobe_map.get(&video.path),
-                            ).await {
+                            match self
+                                .process_single_video_optimized(
+                                    video,
+                                    target,
+                                    media_type,
+                                    cached_show.as_ref(),
+                                    &season_episodes_cache,
+                                    ffprobe_map.get(&video.path),
+                                )
+                                .await
+                            {
                                 Ok(Some((item, _))) => {
                                     items.push(item);
                                 }
@@ -376,11 +403,14 @@ impl Planner {
     }
 
     /// Run ffprobe in parallel for multiple videos (up to 8 concurrent).
-    async fn parallel_ffprobe(&self, videos: &[VideoFile]) -> Vec<(PathBuf, Result<VideoMetadata>)> {
+    async fn parallel_ffprobe(
+        &self,
+        videos: &[VideoFile],
+    ) -> Vec<(PathBuf, Result<VideoMetadata>)> {
         use futures::stream::{self, StreamExt};
-        
+
         const CONCURRENT_LIMIT: usize = 8;
-        
+
         let results: Vec<_> = stream::iter(videos)
             .map(|video| {
                 let path = video.path.clone();
@@ -388,7 +418,7 @@ impl Planner {
                 async move {
                     let ffprobe_result = ffprobe::extract_metadata(&path);
                     let filename_meta = ffprobe::parse_metadata_from_filename(&filename);
-                    
+
                     let result = match ffprobe_result {
                         Ok(meta) => Ok(ffprobe::merge_metadata(meta, filename_meta)),
                         Err(_) => Ok(filename_meta), // Fallback to filename-only metadata
@@ -399,12 +429,12 @@ impl Planner {
             .buffer_unordered(CONCURRENT_LIMIT)
             .collect()
             .await;
-        
+
         results
     }
 
     /// Optimized video processing with season-level caching.
-    /// 
+    ///
     /// Key optimizations:
     /// 1. Uses pre-computed ffprobe results
     /// 2. Caches entire season info (one TMDB call per season, not per episode)
@@ -423,18 +453,20 @@ impl Planner {
         // If found, use direct lookup - this bypasses all other parsing logic
         // ============================================================
         let (path_tmdb_id, path_imdb_id) = metadata::extract_ids_from_path(&video.path);
-        
+
         if path_tmdb_id.is_some() || path_imdb_id.is_some() {
             tracing::debug!(
                 "[PATH-ID] Found IDs in path: tmdb={:?}, imdb={:?} for {}",
-                path_tmdb_id, path_imdb_id, video.filename
+                path_tmdb_id,
+                path_imdb_id,
+                video.filename
             );
-            
+
             // Create metadata with extracted IDs
             let mut path_meta = metadata::CandidateMetadata::default();
             path_meta.tmdb_id = path_tmdb_id;
             path_meta.imdb_id = path_imdb_id.clone();
-            
+
             if media_type == MediaType::Movies {
                 if let Some(movie_metadata) = self.try_direct_id_lookup(&path_meta).await? {
                     tracing::info!(
@@ -442,7 +474,7 @@ impl Planner {
                         movie_metadata.title,
                         video.filename
                     );
-                    
+
                     // Build parsed info
                     let parsed = ParsedFilename {
                         title: Some(movie_metadata.title.clone()),
@@ -452,17 +484,19 @@ impl Planner {
                         raw_response: Some("path_id_lookup".to_string()),
                         ..Default::default()
                     };
-                    
+
                     // Get video metadata
                     let video_metadata = match precomputed_ffprobe {
                         Some(meta) => meta.clone(),
                         None => {
-                            let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
-                            let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                            let ffprobe_meta =
+                                ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                            let filename_parsed =
+                                ffprobe::parse_metadata_from_filename(&video.filename);
                             ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
                         }
                     };
-                    
+
                     // Generate target info
                     let (target_info, operations) = match self.generate_target_info(
                         video,
@@ -476,7 +510,7 @@ impl Planner {
                         Some(result) => result,
                         None => return Ok(None),
                     };
-                    
+
                     return Ok(Some((
                         PlanItem {
                             id: Uuid::new_v4().to_string(),
@@ -512,20 +546,29 @@ impl Planner {
                             Ok(Some(tv_tmdb_id)) => {
                                 tracing::info!(
                                     "[PATH-ID] Resolved TV IMDB {} -> TMDB {}",
-                                    imdb_id, tv_tmdb_id
+                                    imdb_id,
+                                    tv_tmdb_id
                                 );
                                 Some(tv_tmdb_id)
                             }
                             Ok(None) => {
-                                tracing::warn!("[PATH-ID] No TV show found for IMDB ID: {}", imdb_id);
+                                tracing::warn!(
+                                    "[PATH-ID] No TV show found for IMDB ID: {}",
+                                    imdb_id
+                                );
                                 // SOLUTION B: If IMDB ID lookup failed, try parent directory
                                 // This handles cases where season directories have their own IMDB IDs
                                 // that are not recognized by TMDB (e.g., S02.tt13660696 for Slow Horses S2)
                                 // We should look up the parent directory for the show's main ID
-                                self.try_parent_directory_id_lookup(&video.path, imdb_id, client).await
+                                self.try_parent_directory_id_lookup(&video.path, imdb_id, client)
+                                    .await
                             }
                             Err(e) => {
-                                tracing::warn!("[PATH-ID] Failed to lookup IMDB ID {}: {}", imdb_id, e);
+                                tracing::warn!(
+                                    "[PATH-ID] Failed to lookup IMDB ID {}: {}",
+                                    imdb_id,
+                                    e
+                                );
                                 None
                             }
                         }
@@ -535,36 +578,43 @@ impl Planner {
                 } else {
                     None
                 };
-                
+
                 if let Some(tmdb_id) = resolved_tmdb_id {
                     // Try to use existing organized folder logic
-                    if let Some(folder_info) = self.find_organized_tvshow_folder(&video.parent_dir) {
+                    if let Some(folder_info) = self.find_organized_tvshow_folder(&video.parent_dir)
+                    {
                         tracing::info!(
                             "[PATH-ID] TV show file in folder with ID: {} -> tmdb{}",
                             video.filename,
                             tmdb_id
                         );
-                        return self.process_new_file_in_organized_folder(
-                            video,
-                            target,
-                            &folder_info,
-                            season_cache,
-                            precomputed_ffprobe,
-                        ).await;
+                        return self
+                            .process_new_file_in_organized_folder(
+                                video,
+                                target,
+                                &folder_info,
+                                season_cache,
+                                precomputed_ffprobe,
+                            )
+                            .await;
                     }
-                    
+
                     // If not in organized folder, fetch show details and process
                     if let Some(client) = &self.tmdb_client {
                         if let Ok(show_details) = client.get_tv_details(tmdb_id).await {
-                            let show_metadata = self.build_tvshow_metadata_from_details(&show_details);
-                            
+                            let show_metadata =
+                                self.build_tvshow_metadata_from_details(&show_details);
+
                             // Extract episode info from filename
-                            let (season_num, episode_num) = parser::extract_episode_from_filename(&video.filename);
+                            let (season_num, episode_num) =
+                                parser::extract_episode_from_filename(&video.filename);
                             let season = season_num.unwrap_or(1);
                             let episode = episode_num.unwrap_or(1);
-                            
+
                             // Get episode metadata from TMDB
-                            let episode_metadata = if let Ok(ep_details) = client.get_episode_details(tmdb_id, season, episode).await {
+                            let episode_metadata = if let Ok(ep_details) =
+                                client.get_episode_details(tmdb_id, season, episode).await
+                            {
                                 Some(EpisodeMetadata {
                                     name: ep_details.name.clone(),
                                     original_name: None, // Not available in EpisodeDetails
@@ -576,7 +626,7 @@ impl Planner {
                             } else {
                                 None
                             };
-                            
+
                             // Build parsed info
                             let parsed = ParsedFilename {
                                 title: Some(show_metadata.name.clone()),
@@ -587,17 +637,19 @@ impl Planner {
                                 confidence: 1.0,
                                 raw_response: Some("path_id_lookup".to_string()),
                             };
-                            
+
                             // Get video metadata
                             let video_metadata = match precomputed_ffprobe {
                                 Some(meta) => meta.clone(),
                                 None => {
-                                    let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
-                                    let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                                    let ffprobe_meta =
+                                        ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                                    let filename_parsed =
+                                        ffprobe::parse_metadata_from_filename(&video.filename);
                                     ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
                                 }
                             };
-                            
+
                             // Generate target info - tvshow_metadata needs to be a tuple
                             let tvshow_tuple = (show_metadata.clone(), episode_metadata.clone());
                             let (target_info, operations) = match self.generate_target_info(
@@ -612,7 +664,7 @@ impl Planner {
                                 Some(result) => result,
                                 None => return Ok(None),
                             };
-                            
+
                             tracing::info!(
                                 "[PATH-ID] Found TV show via path ID: {} S{:02}E{:02} ({})",
                                 show_metadata.name,
@@ -620,7 +672,7 @@ impl Planner {
                                 episode,
                                 video.filename
                             );
-                            
+
                             return Ok(Some((
                                 PlanItem {
                                     id: Uuid::new_v4().to_string(),
@@ -647,28 +699,33 @@ impl Planner {
                 }
             }
         }
-        
+
         // ============================================================
         // Step 0: Check if this is an already-organized file
         // If so, parse using regex instead of AI for better accuracy
         // ============================================================
         if parser::is_organized_filename(&video.filename) {
-            tracing::debug!("[ORGANIZED] Detected already-organized file: {}", video.filename);
-            return self.process_organized_file(
-                video,
-                target,
-                media_type,
-                cached_show,
-                season_cache,
-                precomputed_ffprobe,
-            ).await;
+            tracing::debug!(
+                "[ORGANIZED] Detected already-organized file: {}",
+                video.filename
+            );
+            return self
+                .process_organized_file(
+                    video,
+                    target,
+                    media_type,
+                    cached_show,
+                    season_cache,
+                    precomputed_ffprobe,
+                )
+                .await;
         }
-        
+
         // ============================================================
         // Step 1: Extract info from filename
         // ============================================================
         let filename_meta = metadata::extract_from_filename(&video.filename);
-        
+
         // Try direct ID lookup from filename (in case path extraction missed something)
         if media_type == MediaType::Movies {
             if let Some(movie_metadata) = self.try_direct_id_lookup(&filename_meta).await? {
@@ -677,7 +734,7 @@ impl Planner {
                     movie_metadata.title,
                     video.filename
                 );
-                
+
                 // Build parsed info from filename metadata
                 let parsed = ParsedFilename {
                     title: filename_meta.chinese_title.clone(),
@@ -688,17 +745,19 @@ impl Planner {
                     confidence: 1.0,
                     raw_response: Some("direct_id_lookup".to_string()),
                 };
-                
+
                 // Get video metadata (use precomputed or fallback)
                 let video_metadata = match precomputed_ffprobe {
                     Some(meta) => meta.clone(),
                     None => {
-                        let ffprobe_meta = ffprobe::extract_metadata(&video.path).unwrap_or_default();
-                        let filename_parsed = ffprobe::parse_metadata_from_filename(&video.filename);
+                        let ffprobe_meta =
+                            ffprobe::extract_metadata(&video.path).unwrap_or_default();
+                        let filename_parsed =
+                            ffprobe::parse_metadata_from_filename(&video.filename);
                         ffprobe::merge_metadata(ffprobe_meta, filename_parsed)
                     }
                 };
-                
+
                 // Generate target info and operations
                 let (target_info, operations) = match self.generate_target_info(
                     video,
@@ -712,7 +771,7 @@ impl Planner {
                     Some(result) => result,
                     None => return Ok(None),
                 };
-                
+
                 let plan_item = PlanItem {
                     id: Uuid::new_v4().to_string(),
                     source: video.clone(),
@@ -731,11 +790,11 @@ impl Planner {
                     operations,
                     status: PlanItemStatus::Pending,
                 };
-                
+
                 return Ok(Some((plan_item, None)));
             }
         }
-        
+
         // Step 2: Parse filename (AI or regex) - fallback when no ID found
         let parsed = if media_type == MediaType::TvShows && cached_show.is_some() {
             // FAST PATH: Extract episode from filename using regex
@@ -744,10 +803,12 @@ impl Planner {
                 tracing::debug!("Could not extract episode from: {}", video.filename);
                 return Ok(None);
             }
-            
+
             // Try to extract season from parent directory name (e.g., "第一季", "Season 01")
             if season.is_none() || season == Some(1) {
-                let parent_name = video.parent_dir.file_name()
+                let parent_name = video
+                    .parent_dir
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
                 if let Some(dir_season) = parser::extract_season_from_dirname(parent_name) {
@@ -759,7 +820,7 @@ impl Planner {
                     season = Some(dir_season);
                 }
             }
-            
+
             ParsedFilename {
                 title: cached_show.map(|s| s.name.clone()),
                 original_title: cached_show.map(|s| s.original_name.clone()),
@@ -793,43 +854,45 @@ impl Planner {
             MediaType::TvShows => {
                 if let Some(show_meta) = cached_show {
                     // Use cached show, get episode from season cache
-                    let (season, episode) = (parsed.season.unwrap_or(1), parsed.episode.unwrap_or(1));
-                    let ep_meta = self.get_episode_from_cache(
-                        show_meta.tmdb_id,
-                        season,
-                        episode,
-                        season_cache,
-                    ).await;
+                    let (season, episode) =
+                        (parsed.season.unwrap_or(1), parsed.episode.unwrap_or(1));
+                    let ep_meta = self
+                        .get_episode_from_cache(show_meta.tmdb_id, season, episode, season_cache)
+                        .await;
                     (None, Some(show_meta.clone()), ep_meta)
                 } else {
                     // First video: get show info and cache season
                     let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
-                    let (show, _) = self.query_tmdb_tvshow_with_folder(&parsed, folder_name.as_deref()).await?;
+                    let (show, _) = self
+                        .query_tmdb_tvshow_with_folder(&parsed, folder_name.as_deref())
+                        .await?;
                     if show.is_none() {
                         return Ok(None);
                     }
                     let show_meta = show.unwrap();
-                    
+
                     // Get episode info (with season caching)
                     let (season, episode) = {
                         let (mut s, e) = parser::extract_episode_from_filename(&video.filename);
                         // Try to extract season from parent directory
                         if s.is_none() || s == Some(1) {
-                            let parent_name = video.parent_dir.file_name()
+                            let parent_name = video
+                                .parent_dir
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("");
                             if let Some(dir_s) = parser::extract_season_from_dirname(parent_name) {
                                 s = Some(dir_s);
                             }
                         }
-                        (s.or(parsed.season).unwrap_or(1), e.or(parsed.episode).unwrap_or(1))
+                        (
+                            s.or(parsed.season).unwrap_or(1),
+                            e.or(parsed.episode).unwrap_or(1),
+                        )
                     };
-                    let ep_meta = self.get_episode_from_cache(
-                        show_meta.tmdb_id,
-                        season,
-                        episode,
-                        season_cache,
-                    ).await;
+                    let ep_meta = self
+                        .get_episode_from_cache(show_meta.tmdb_id, season, episode, season_cache)
+                        .await;
                     (None, Some(show_meta), ep_meta)
                 }
             }
@@ -846,10 +909,10 @@ impl Planner {
         };
 
         // Step 4: Generate target info and operations
-        let tvshow_with_episode = tvshow_metadata.as_ref().map(|show| {
-            (show.clone(), episode_metadata.clone())
-        });
-        
+        let tvshow_with_episode = tvshow_metadata
+            .as_ref()
+            .map(|show| (show.clone(), episode_metadata.clone()));
+
         let (target_info, operations) = match self.generate_target_info(
             video,
             &movie_metadata,
@@ -886,7 +949,7 @@ impl Planner {
     }
 
     /// Process an already-organized file (detected by filename format).
-    /// 
+    ///
     /// This handles files that were previously organized by this tool, extracting
     /// metadata directly from the filename format instead of using AI.
     async fn process_organized_file(
@@ -894,7 +957,7 @@ impl Planner {
         video: &VideoFile,
         target: &Path,
         media_type: MediaType,
-        cached_show: Option<&TvShowMetadata>,  // Use cached show to avoid redundant TMDB calls
+        cached_show: Option<&TvShowMetadata>, // Use cached show to avoid redundant TMDB calls
         season_cache: &SeasonEpisodesCache,
         precomputed_ffprobe: Option<&VideoMetadata>,
     ) -> Result<Option<(PlanItem, Option<TvShowMetadata>)>> {
@@ -904,14 +967,17 @@ impl Planner {
                 let info = match parser::parse_organized_tvshow_filename(&video.filename) {
                     Some(info) => info,
                     None => {
-                        tracing::warn!("[ORGANIZED] Could not parse TV show format: {}", video.filename);
+                        tracing::warn!(
+                            "[ORGANIZED] Could not parse TV show format: {}",
+                            video.filename
+                        );
                         return Ok(None);
                     }
                 };
-                
+
                 // Try to extract TMDB ID from parent folder names (may be nested like Show/Season 01/)
                 let folder_info = self.find_organized_tvshow_folder(&video.parent_dir);
-                
+
                 // OPTIMIZATION: Use cached show if available and TMDB ID matches
                 let show_meta = if let Some(cached) = cached_show {
                     // Verify TMDB ID matches (if we have folder info)
@@ -919,7 +985,9 @@ impl Planner {
                         if cached.tmdb_id == folder.tmdb_id {
                             tracing::debug!(
                                 "[ORGANIZED] Using cached show for: {} S{:02}E{:02}",
-                                info.title, info.season, info.episode
+                                info.title,
+                                info.season,
+                                info.episode
                             );
                             cached.clone()
                         } else {
@@ -932,14 +1000,18 @@ impl Planner {
                     }
                 } else if let Some(ref folder) = folder_info {
                     // No cache, fetch by TMDB ID from folder
-                    println!("    [ORGANIZED] Re-indexing TV via ID: {} S{:02}E{:02} (tmdb{})", 
-                        folder.title, info.season, info.episode, folder.tmdb_id);
+                    println!(
+                        "    [ORGANIZED] Re-indexing TV via ID: {} S{:02}E{:02} (tmdb{})",
+                        folder.title, info.season, info.episode, folder.tmdb_id
+                    );
                     self.fetch_tvshow_by_id(folder.tmdb_id).await?
                 } else {
                     // Fall back to searching by title
-                    println!("    [ORGANIZED] Re-indexing TV: {} S{:02}E{:02}", 
-                        info.title, info.season, info.episode);
-                    
+                    println!(
+                        "    [ORGANIZED] Re-indexing TV: {} S{:02}E{:02}",
+                        info.title, info.season, info.episode
+                    );
+
                     let parent_folder = self.get_meaningful_folder_name(&video.parent_dir);
                     let parsed_search = ParsedFilename {
                         title: Some(info.title.clone()),
@@ -950,15 +1022,17 @@ impl Planner {
                         confidence: 1.0,
                         raw_response: Some("organized_format".to_string()),
                     };
-                    
-                    let (show, _) = self.query_tmdb_tvshow_with_folder(&parsed_search, parent_folder.as_deref()).await?;
+
+                    let (show, _) = self
+                        .query_tmdb_tvshow_with_folder(&parsed_search, parent_folder.as_deref())
+                        .await?;
                     if show.is_none() {
                         tracing::warn!("[ORGANIZED] TMDB search failed for: {}", info.title);
                         return Ok(None);
                     }
                     show.unwrap()
                 };
-                
+
                 let parsed = ParsedFilename {
                     title: Some(info.title.clone()),
                     original_title: None,
@@ -968,15 +1042,17 @@ impl Planner {
                     confidence: 1.0,
                     raw_response: Some("organized_format".to_string()),
                 };
-                
+
                 // Get episode metadata
-                let ep_meta = self.get_episode_from_cache(
-                    show_meta.tmdb_id,
-                    info.season,
-                    info.episode,
-                    season_cache,
-                ).await;
-                
+                let ep_meta = self
+                    .get_episode_from_cache(
+                        show_meta.tmdb_id,
+                        info.season,
+                        info.episode,
+                        season_cache,
+                    )
+                    .await;
+
                 (parsed, None, Some(show_meta), ep_meta)
             }
             MediaType::Movies => {
@@ -984,17 +1060,22 @@ impl Planner {
                 let mut info = match parser::parse_organized_movie_filename(&video.filename) {
                     Some(info) => info,
                     None => {
-                        tracing::warn!("[ORGANIZED] Could not parse movie format: {}", video.filename);
+                        tracing::warn!(
+                            "[ORGANIZED] Could not parse movie format: {}",
+                            video.filename
+                        );
                         return Ok(None);
                     }
                 };
-                
+
                 // If tmdb_id is None, try to extract from parent folder
                 // This handles files with technical info format: [Title](Year)-1080p-...
                 let tmdb_id = match info.tmdb_id {
                     Some(id) => id,
                     None => {
-                        if let Some(folder_info) = self.find_organized_movie_folder(&video.parent_dir) {
+                        if let Some(folder_info) =
+                            self.find_organized_movie_folder(&video.parent_dir)
+                        {
                             tracing::debug!(
                                 "[ORGANIZED] Extracted TMDB ID {} from parent folder for: {}",
                                 folder_info.tmdb_id,
@@ -1005,18 +1086,22 @@ impl Planner {
                             }
                             folder_info.tmdb_id
                         } else {
-                            tracing::warn!("[ORGANIZED] Could not find TMDB ID for: {}", video.filename);
+                            tracing::warn!(
+                                "[ORGANIZED] Could not find TMDB ID for: {}",
+                                video.filename
+                            );
                             return Ok(None);
                         }
                     }
                 };
-                
-                println!("    [ORGANIZED] Re-indexing movie: {} ({}), tmdb{}", 
-                    info.original_title.as_deref().unwrap_or("?"), 
-                    info.year, 
+
+                println!(
+                    "    [ORGANIZED] Re-indexing movie: {} ({}), tmdb{}",
+                    info.original_title.as_deref().unwrap_or("?"),
+                    info.year,
                     tmdb_id
                 );
-                
+
                 // Fetch movie details directly using TMDB ID
                 let tmdb = match self.tmdb_client.as_ref() {
                     Some(client) => client,
@@ -1027,29 +1112,39 @@ impl Planner {
                 };
                 let details = tmdb.get_movie_details(tmdb_id).await?;
                 let credits = tmdb.get_movie_credits(tmdb_id).await.ok();
-                
+
                 // Fetch collection details if movie belongs to a collection
                 let collection_total = if let Some(ref collection) = details.belongs_to_collection {
                     match tmdb.get_collection_details(collection.id).await {
                         Ok(collection_details) => {
                             tracing::debug!(
                                 "[COLLECTION] Fetched {} (tmdb{}): {} movies total",
-                                collection.name, collection.id, collection_details.parts.len()
+                                collection.name,
+                                collection.id,
+                                collection_details.parts.len()
                             );
                             Some(collection_details.parts.len())
                         }
                         Err(e) => {
-                            tracing::warn!("[COLLECTION] Failed to fetch collection {}: {}", collection.id, e);
+                            tracing::warn!(
+                                "[COLLECTION] Failed to fetch collection {}: {}",
+                                collection.id,
+                                e
+                            );
                             None
                         }
                     }
                 } else {
                     None
                 };
-                
+
                 // Build movie metadata
-                let metadata = self.build_movie_metadata_from_details(&details, credits.as_ref(), collection_total);
-                
+                let metadata = self.build_movie_metadata_from_details(
+                    &details,
+                    credits.as_ref(),
+                    collection_total,
+                );
+
                 let parsed = ParsedFilename {
                     original_title: info.original_title,
                     title: info.title,
@@ -1059,11 +1154,11 @@ impl Planner {
                     confidence: 1.0,
                     raw_response: Some("organized_format".to_string()),
                 };
-                
+
                 (parsed, Some(metadata), None, None)
             }
         };
-        
+
         // Get video metadata
         let video_metadata = match precomputed_ffprobe {
             Some(meta) => meta.clone(),
@@ -1073,12 +1168,12 @@ impl Planner {
                 ffprobe::merge_metadata(ffprobe_meta, filename_meta)
             }
         };
-        
+
         // Generate target info
-        let tvshow_with_episode = tvshow_metadata.as_ref().map(|show| {
-            (show.clone(), episode_metadata.clone())
-        });
-        
+        let tvshow_with_episode = tvshow_metadata
+            .as_ref()
+            .map(|show| (show.clone(), episode_metadata.clone()));
+
         let (target_info, operations) = match self.generate_target_info(
             video,
             &movie_metadata,
@@ -1091,7 +1186,7 @@ impl Planner {
             Some(result) => result,
             None => return Ok(None),
         };
-        
+
         let plan_item = PlanItem {
             id: Uuid::new_v4().to_string(),
             source: video.clone(),
@@ -1110,12 +1205,12 @@ impl Planner {
             operations,
             status: PlanItemStatus::Pending,
         };
-        
+
         Ok(Some((plan_item, tvshow_metadata)))
     }
-    
+
     /// Build MovieMetadata from TMDB MovieDetails (used for organized files).
-    /// 
+    ///
     /// The `collection_total_movies` parameter is optional and represents the total number
     /// of movies in the collection (franchise series). If provided, it will be included
     /// in the metadata for NFO generation.
@@ -1150,9 +1245,7 @@ impl Planner {
             .map(|c| {
                 c.crew
                     .iter()
-                    .filter(|m| {
-                        matches!(m.job.as_str(), "Writer" | "Screenplay" | "Story")
-                    })
+                    .filter(|m| matches!(m.job.as_str(), "Writer" | "Screenplay" | "Story"))
                     .map(|m| m.name.clone())
                     .collect()
             })
@@ -1164,14 +1257,14 @@ impl Planner {
             .as_ref()
             .map(|countries| countries.iter().map(|c| c.iso_3166_1.clone()).collect())
             .unwrap_or_default();
-        
+
         // Use origin_country as fallback if production_countries is empty
         if country_codes.is_empty() {
             if let Some(ref origin) = details.origin_country {
                 country_codes = origin.clone();
             }
         }
-        
+
         // Extract country names - use production_countries first, then map from origin_country codes
         let countries: Vec<String> = if let Some(ref pc) = details.production_countries {
             if !pc.is_empty() {
@@ -1187,13 +1280,13 @@ impl Planner {
         } else {
             Vec::new()
         };
-        
+
         let genres: Vec<String> = details
             .genres
             .as_ref()
             .map(|genres| genres.iter().map(|g| g.name.clone()).collect())
             .unwrap_or_default();
-        
+
         let studios: Vec<String> = details
             .production_companies
             .as_ref()
@@ -1205,7 +1298,7 @@ impl Planner {
             .as_ref()
             .map(|p| vec![format!("https://image.tmdb.org/t/p/original{}", p)])
             .unwrap_or_default();
-        
+
         let backdrop_url: Option<String> = details
             .backdrop_path
             .as_ref()
@@ -1217,7 +1310,9 @@ impl Planner {
             title: details.title.clone(),
             original_title: details.original_title.clone(),
             original_language: details.original_language.clone(),
-            year: details.release_date.as_ref()
+            year: details
+                .release_date
+                .as_ref()
                 .and_then(|d| d.split('-').next())
                 .and_then(|y| y.parse().ok())
                 .unwrap_or(0),
@@ -1239,14 +1334,20 @@ impl Planner {
             actor_roles,
             certification: None,
             collection_id: details.belongs_to_collection.as_ref().map(|c| c.id),
-            collection_name: details.belongs_to_collection.as_ref().map(|c| c.name.clone()),
-            collection_overview: details.belongs_to_collection.as_ref().and_then(|c| c.overview.clone()),
+            collection_name: details
+                .belongs_to_collection
+                .as_ref()
+                .map(|c| c.name.clone()),
+            collection_overview: details
+                .belongs_to_collection
+                .as_ref()
+                .and_then(|c| c.overview.clone()),
             collection_total_movies,
         }
     }
-    
+
     /// Process a new file that was added to an already-organized folder.
-    /// 
+    ///
     /// This handles the common case where:
     /// - A TV show folder was already organized (e.g., `[罚罪2](2025)-tt36771056-tmdb296146/`)
     /// - User later added new episode files (e.g., `19.mp4`, `20.mp4`)
@@ -1261,7 +1362,7 @@ impl Planner {
     ) -> Result<Option<(PlanItem, Option<TvShowMetadata>)>> {
         // Extract season and episode from filename
         let (mut season, episode) = parser::extract_episode_from_filename(&video.filename);
-        
+
         if episode.is_none() {
             tracing::warn!(
                 "[ORGANIZED-FOLDER] Cannot extract episode from: {} (in folder tmdb{})",
@@ -1270,29 +1371,27 @@ impl Planner {
             );
             return Ok(None);
         }
-        
+
         // Try to extract season from parent directory name
         if season.is_none() || season == Some(1) {
-            let parent_name = video.parent_dir.file_name()
+            let parent_name = video
+                .parent_dir
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             if let Some(dir_season) = parser::extract_season_from_dirname(parent_name) {
                 season = Some(dir_season);
             }
         }
-        
+
         let season = season.unwrap_or(1);
         let episode = episode.unwrap();
-        
+
         println!(
             "    [ORGANIZED-FOLDER] New file: {} -> {} S{:02}E{:02} (tmdb{})",
-            video.filename,
-            folder_info.title,
-            season,
-            episode,
-            folder_info.tmdb_id
+            video.filename, folder_info.title, season, episode, folder_info.tmdb_id
         );
-        
+
         // Fetch TV show details using TMDB ID from folder
         let tmdb = match self.tmdb_client.as_ref() {
             Some(client) => client,
@@ -1301,7 +1400,7 @@ impl Planner {
                 return Ok(None);
             }
         };
-        
+
         let show_meta = match tmdb.get_tv_details(folder_info.tmdb_id).await {
             Ok(details) => self.build_tvshow_metadata_from_details(&details),
             Err(e) => {
@@ -1313,15 +1412,12 @@ impl Planner {
                 return Ok(None);
             }
         };
-        
+
         // Get episode metadata
-        let ep_meta = self.get_episode_from_cache(
-            show_meta.tmdb_id,
-            season,
-            episode,
-            season_cache,
-        ).await;
-        
+        let ep_meta = self
+            .get_episode_from_cache(show_meta.tmdb_id, season, episode, season_cache)
+            .await;
+
         let parsed = ParsedFilename {
             title: Some(folder_info.title.clone()),
             original_title: None,
@@ -1331,7 +1427,7 @@ impl Planner {
             confidence: 1.0,
             raw_response: Some("organized_folder".to_string()),
         };
-        
+
         // Get video metadata
         let video_metadata = match precomputed_ffprobe {
             Some(meta) => meta.clone(),
@@ -1341,10 +1437,10 @@ impl Planner {
                 ffprobe::merge_metadata(ffprobe_meta, filename_meta)
             }
         };
-        
+
         // Generate target info
         let tvshow_with_episode = Some((show_meta.clone(), ep_meta.clone()));
-        
+
         let (target_info, operations) = match self.generate_target_info(
             video,
             &None,
@@ -1357,7 +1453,7 @@ impl Planner {
             Some(result) => result,
             None => return Ok(None),
         };
-        
+
         let plan_item = PlanItem {
             id: Uuid::new_v4().to_string(),
             source: video.clone(),
@@ -1376,18 +1472,21 @@ impl Planner {
             operations,
             status: PlanItemStatus::Pending,
         };
-        
+
         Ok(Some((plan_item, Some(show_meta))))
     }
-    
+
     /// Find an organized TV show folder by looking up the directory hierarchy.
-    /// 
+    ///
     /// Since organized TV shows may have structure like:
     /// `[Show](Year)-ttIMDB-tmdbID/Season 01/[Show]-S01E01-...mp4`
     /// We need to look at parent directories, not just the immediate parent.
-    fn find_organized_tvshow_folder(&self, start_dir: &Path) -> Option<parser::OrganizedTvShowFolderInfo> {
+    fn find_organized_tvshow_folder(
+        &self,
+        start_dir: &Path,
+    ) -> Option<parser::OrganizedTvShowFolderInfo> {
         let mut current = Some(start_dir);
-        
+
         while let Some(dir) = current {
             if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
                 // Try to parse as organized folder
@@ -1398,89 +1497,99 @@ impl Planner {
             }
             current = dir.parent();
         }
-        
+
         None
     }
-    
+
     /// Find an organized movie folder by searching parent directories.
-    fn find_organized_movie_folder(&self, start_dir: &Path) -> Option<parser::OrganizedMovieFolderInfo> {
+    fn find_organized_movie_folder(
+        &self,
+        start_dir: &Path,
+    ) -> Option<parser::OrganizedMovieFolderInfo> {
         let mut current = Some(start_dir);
-        
+
         while let Some(dir) = current {
             if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
                 // Try to parse as organized folder
                 if let Some(info) = parser::parse_organized_movie_folder(name) {
-                    tracing::debug!("Found organized movie folder: {} (tmdb{})", name, info.tmdb_id);
+                    tracing::debug!(
+                        "Found organized movie folder: {} (tmdb{})",
+                        name,
+                        info.tmdb_id
+                    );
                     return Some(info);
                 }
             }
             current = dir.parent();
         }
-        
+
         None
     }
-    
+
     /// Fetch TV show metadata by TMDB ID.
     async fn fetch_tvshow_by_id(&self, tmdb_id: u64) -> Result<TvShowMetadata> {
         let tmdb = match self.tmdb_client.as_ref() {
             Some(client) => client,
             None => {
-                return Err(crate::error::Error::Other("TMDB client not initialized".to_string()));
+                return Err(crate::error::Error::Other(
+                    "TMDB client not initialized".to_string(),
+                ));
             }
         };
-        
+
         let details = tmdb.get_tv_details(tmdb_id).await?;
         Ok(self.build_tvshow_metadata_from_details(&details))
     }
-    
+
     /// Build TvShowMetadata from TMDB TvDetails (used for organized files with TMDB ID).
     fn build_tvshow_metadata_from_details(
         &self,
         details: &crate::services::tmdb::TvDetails,
     ) -> TvShowMetadata {
         use crate::models::media::Actor;
-        
+
         let genres: Vec<String> = details
             .genres
             .as_ref()
             .map(|gs| gs.iter().map(|g| g.name.clone()).collect())
             .unwrap_or_default();
-        
+
         let mut countries: Vec<String> = details
             .production_countries
             .as_ref()
             .map(|cs| cs.iter().map(|c| c.name.clone()).collect())
             .unwrap_or_default();
-        
+
         let mut country_codes: Vec<String> = details
             .production_countries
             .as_ref()
             .map(|cs| cs.iter().map(|c| c.iso_3166_1.clone()).collect())
             .unwrap_or_default();
-        
+
         // Use origin_country as fallback if production_countries is empty
         if country_codes.is_empty() {
             if let Some(ref origin) = details.origin_country {
                 country_codes = origin.clone();
                 // Also map country codes to names for consistency
-                countries = origin.iter().map(|code| {
-                    country_code_to_name(code)
-                }).collect();
+                countries = origin
+                    .iter()
+                    .map(|code| country_code_to_name(code))
+                    .collect();
             }
         }
-        
+
         let networks: Vec<String> = details
             .networks
             .as_ref()
             .map(|ns| ns.iter().map(|n| n.name.clone()).collect())
             .unwrap_or_default();
-        
+
         let creators: Vec<String> = details
             .created_by
             .as_ref()
             .map(|cs| cs.iter().map(|c| c.name.clone()).collect())
             .unwrap_or_default();
-        
+
         let actors: Vec<Actor> = details
             .credits
             .as_ref()
@@ -1496,30 +1605,30 @@ impl Planner {
                     .collect()
             })
             .unwrap_or_default();
-        
+
         let imdb_id = details
             .external_ids
             .as_ref()
             .and_then(|e| e.imdb_id.clone());
-        
+
         let year = details
             .first_air_date
             .as_ref()
             .and_then(|d| d.split('-').next())
             .and_then(|y| y.parse().ok())
             .unwrap_or(0);
-        
+
         let poster_urls: Vec<String> = details
             .poster_path
             .as_ref()
             .map(|p| vec![format!("https://image.tmdb.org/t/p/original{}", p)])
             .unwrap_or_default();
-        
+
         let backdrop_url = details
             .backdrop_path
             .as_ref()
             .map(|p| format!("https://image.tmdb.org/t/p/original{}", p));
-        
+
         TvShowMetadata {
             tmdb_id: details.id,
             imdb_id,
@@ -1555,7 +1664,7 @@ impl Planner {
         cache: &SeasonEpisodesCache,
     ) -> Option<EpisodeMetadata> {
         let cache_key = (tmdb_id, season);
-        
+
         // Check cache first
         {
             let read_cache = cache.read().await;
@@ -1573,7 +1682,7 @@ impl Planner {
                 }
             }
         }
-        
+
         // Cache miss - fetch entire season
         if let Some(client) = &self.tmdb_client {
             match client.get_season_details(tmdb_id, season).await {
@@ -1584,9 +1693,11 @@ impl Planner {
                         season_details.episodes.len(),
                         tmdb_id
                     );
-                    
+
                     // Find the target episode first
-                    let target_ep = season_details.episodes.iter()
+                    let target_ep = season_details
+                        .episodes
+                        .iter()
                         .find(|e| e.episode_number == episode)
                         .map(|ep_info| EpisodeMetadata {
                             season_number: season,
@@ -1596,13 +1707,13 @@ impl Planner {
                             air_date: ep_info.air_date.clone(),
                             overview: ep_info.overview.clone(),
                         });
-                    
+
                     // Update cache
                     {
                         let mut write_cache = cache.write().await;
                         write_cache.insert(cache_key, season_details.episodes);
                     }
-                    
+
                     return target_ep;
                 }
                 Err(e) => {
@@ -1610,7 +1721,7 @@ impl Planner {
                 }
             }
         }
-        
+
         // Fallback: return basic episode info
         Some(EpisodeMetadata {
             season_number: season,
@@ -1623,54 +1734,68 @@ impl Planner {
     }
 
     /// Select the best representative video from a group for AI parsing.
-    /// 
+    ///
     /// Priority order:
     /// 1. Standard episode format (SxxExx, e.g., S02E01) - most reliable for AI parsing
     /// 2. Any non-Special file
     /// 3. First file as fallback
-    /// 
+    ///
     /// This avoids selecting "Special" files first, which often cause AI to produce
     /// incorrect titles like "Black Mirror Special White Christmas" instead of "Black Mirror".
     fn select_representative_video(videos: &[VideoFile]) -> &VideoFile {
         use regex::Regex;
-        
+
         // Pattern 1: Standard SxxExx format (e.g., S02E01, s01e05)
         let standard_episode_regex = Regex::new(r"(?i)S\d{1,2}E\d{1,2}").unwrap();
-        
+
         // Pattern 2: Special indicator patterns to avoid
-        let special_regex = Regex::new(r"(?i)(\.special\.|[_\-\.]sp[_\-\.]|\[sp\]|special)").unwrap();
-        
+        let special_regex =
+            Regex::new(r"(?i)(\.special\.|[_\-\.]sp[_\-\.]|\[sp\]|special)").unwrap();
+
         // First pass: find a file with standard SxxExx format
-        if let Some(video) = videos.iter().find(|v| standard_episode_regex.is_match(&v.filename)) {
-            tracing::debug!("Selected representative video (standard format): {}", video.filename);
+        if let Some(video) = videos
+            .iter()
+            .find(|v| standard_episode_regex.is_match(&v.filename))
+        {
+            tracing::debug!(
+                "Selected representative video (standard format): {}",
+                video.filename
+            );
             return video;
         }
-        
+
         // Second pass: find any file that's not a Special
         if let Some(video) = videos.iter().find(|v| !special_regex.is_match(&v.filename)) {
-            tracing::debug!("Selected representative video (non-special): {}", video.filename);
+            tracing::debug!(
+                "Selected representative video (non-special): {}",
+                video.filename
+            );
             return video;
         }
-        
+
         // Fallback: first file
-        tracing::debug!("Selected representative video (fallback): {}", videos[0].filename);
+        tracing::debug!(
+            "Selected representative video (fallback): {}",
+            videos[0].filename
+        );
         &videos[0]
     }
 
     /// Group videos by their immediate parent directory.
-    /// 
+    ///
     /// This is the correct grouping for TV shows:
     /// - /Videos/TV_Shows/Show1/01.mp4 -> parent_dir: /Videos/TV_Shows/Show1
     /// - /Videos/TV_Shows/Collection/ShowA/01.mp4 -> parent_dir: /Videos/TV_Shows/Collection/ShowA
     /// - /Videos/TV_Shows/Collection/ShowB/01.mp4 -> parent_dir: /Videos/TV_Shows/Collection/ShowB
-    /// 
+    ///
     /// Each parent directory represents a single TV show/season.
     fn group_by_top_level_dir(
         &self,
         videos: &[VideoFile],
         _source: &Path,
     ) -> std::collections::HashMap<PathBuf, Vec<VideoFile>> {
-        let mut groups: std::collections::HashMap<PathBuf, Vec<VideoFile>> = std::collections::HashMap::new();
+        let mut groups: std::collections::HashMap<PathBuf, Vec<VideoFile>> =
+            std::collections::HashMap::new();
 
         for video in videos {
             // Use intelligent parent lookup to determine the grouping key
@@ -1682,23 +1807,23 @@ impl Planner {
 
         groups
     }
-    
+
     /// Find the meaningful parent directory path (not just name) for grouping.
-    /// 
+    ///
     /// This returns the path to the first parent directory that has a meaningful name.
     /// Used for grouping videos that are in technical subdirectories.
     fn find_meaningful_parent_dir(video: &VideoFile) -> PathBuf {
         const MAX_DEPTH: usize = 3;
         let mut current = video.parent_dir.as_path();
         let mut depth = 1;
-        
+
         while depth <= MAX_DEPTH {
             if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
                 // If this directory name is meaningful, use this path
                 if !Self::is_meaningless_dirname(name) {
                     return current.to_path_buf();
                 }
-                
+
                 // Otherwise, go up one level
                 if let Some(parent) = current.parent() {
                     current = parent;
@@ -1710,14 +1835,14 @@ impl Planner {
                 break;
             }
         }
-        
+
         // Fallback to immediate parent
         video.parent_dir.clone()
     }
 
     /// Process a single video file with optional cached TV show metadata.
     /// Returns the PlanItem and the TV show metadata (for caching).
-    /// 
+    ///
     /// OPTIMIZATION: For TV shows with cached metadata, we extract episode numbers
     /// from filename using regex instead of calling AI for each file.
     #[allow(dead_code)]
@@ -1738,12 +1863,12 @@ impl Planner {
                 season,
                 episode
             );
-            
+
             if episode.is_none() {
                 tracing::debug!("Could not extract episode number from: {}", video.filename);
                 return Ok(None);
             }
-            
+
             // Create a minimal parsed result with episode info
             ParsedFilename {
                 title: cached_show.as_ref().map(|(s, _)| s.name.clone()),
@@ -1769,13 +1894,12 @@ impl Planner {
         // Step 2: Query TMDB based on media type
         // For movies, try to extract IMDB ID from filename for priority lookup
         let filename_imdb_id = metadata::extract_from_filename(&video.filename).imdb_id;
-        
+
         let (movie_metadata, tvshow_metadata) = match media_type {
             MediaType::Movies => {
-                let movie = self.query_tmdb_movie_with_imdb(
-                    &parsed,
-                    filename_imdb_id.as_deref(),
-                ).await?;
+                let movie = self
+                    .query_tmdb_movie_with_imdb(&parsed, filename_imdb_id.as_deref())
+                    .await?;
                 if movie.is_none() {
                     tracing::debug!("No TMDB match for movie: {}", video.filename);
                     return Ok(None);
@@ -1793,9 +1917,13 @@ impl Planner {
                         parsed.episode
                     );
                     // Get episode info for this specific file using regex-extracted numbers
-                    let episode = if let (Some(season), Some(ep)) = (parsed.season, parsed.episode) {
+                    let episode = if let (Some(season), Some(ep)) = (parsed.season, parsed.episode)
+                    {
                         if let Some(client) = &self.tmdb_client {
-                            match client.get_episode_details(cached_show_meta.tmdb_id, season, ep).await {
+                            match client
+                                .get_episode_details(cached_show_meta.tmdb_id, season, ep)
+                                .await
+                            {
                                 Ok(ep_details) => Some(EpisodeMetadata {
                                     season_number: season,
                                     episode_number: ep,
@@ -1831,19 +1959,24 @@ impl Planner {
                     // No cache, query TMDB with folder name as fallback
                     // Try to get meaningful folder name (skip quality descriptors)
                     let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
-                    let (show, mut episode) = self.query_tmdb_tvshow_with_folder(&parsed, folder_name.as_deref()).await?;
+                    let (show, mut episode) = self
+                        .query_tmdb_tvshow_with_folder(&parsed, folder_name.as_deref())
+                        .await?;
                     if show.is_none() {
                         tracing::debug!("No TMDB match for TV show: {}", video.filename);
                         return Ok(None);
                     }
                     let show_meta = show.unwrap();
-                    
+
                     // If episode is None (AI didn't parse season/episode), try regex extraction
                     if episode.is_none() {
-                        let (mut regex_season, regex_ep) = parser::extract_episode_from_filename(&video.filename);
+                        let (mut regex_season, regex_ep) =
+                            parser::extract_episode_from_filename(&video.filename);
                         // Try to get season from parent directory name
                         if regex_season.is_none() || regex_season == Some(1) {
-                            let parent_name = video.parent_dir.file_name()
+                            let parent_name = video
+                                .parent_dir
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("");
                             if let Some(dir_s) = parser::extract_season_from_dirname(parent_name) {
@@ -1856,10 +1989,13 @@ impl Planner {
                             regex_season,
                             regex_ep
                         );
-                        
+
                         if let (Some(season), Some(ep)) = (regex_season, regex_ep) {
                             if let Some(client) = &self.tmdb_client {
-                                match client.get_episode_details(show_meta.tmdb_id, season, ep).await {
+                                match client
+                                    .get_episode_details(show_meta.tmdb_id, season, ep)
+                                    .await
+                                {
                                     Ok(ep_details) => {
                                         episode = Some(EpisodeMetadata {
                                             season_number: season,
@@ -1871,7 +2007,12 @@ impl Planner {
                                         });
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Failed to get episode details for S{}E{}: {}", season, ep, e);
+                                        tracing::warn!(
+                                            "Failed to get episode details for S{}E{}: {}",
+                                            season,
+                                            ep,
+                                            e
+                                        );
                                         episode = Some(EpisodeMetadata {
                                             season_number: season,
                                             episode_number: ep,
@@ -1885,7 +2026,7 @@ impl Planner {
                             }
                         }
                     }
-                    
+
                     (None, Some((show_meta, episode)))
                 }
             }
@@ -1894,10 +2035,10 @@ impl Planner {
         // Step 3: Extract video metadata with ffprobe + filename parsing
         let ffprobe_metadata = ffprobe::extract_metadata(&video.path).unwrap_or_default();
         let filename_metadata = ffprobe::parse_metadata_from_filename(&video.filename);
-        
+
         // Merge: prefer ffprobe data, but use filename data as fallback
         let video_metadata = ffprobe::merge_metadata(ffprobe_metadata, filename_metadata);
-        
+
         tracing::debug!(
             "Video metadata for {}: resolution={}, format={}, codec={}",
             video.filename,
@@ -1951,44 +2092,54 @@ impl Planner {
         let is_quality_desc = |name: &str| -> bool {
             let lower = name.to_lowercase();
             // Skip quality descriptors
-            if lower.contains("1080") || lower.contains("720") 
-                || lower.contains("2160") || lower.contains("4k")
-                || lower.contains("内封") || lower.contains("外挂")
-                || lower.contains("字幕") {
+            if lower.contains("1080")
+                || lower.contains("720")
+                || lower.contains("2160")
+                || lower.contains("4k")
+                || lower.contains("内封")
+                || lower.contains("外挂")
+                || lower.contains("字幕")
+            {
                 return true;
             }
             // Skip season directories: S1, S01, Season 1, Season.2, 第1季
             if regex::Regex::new(r"^s\d{1,2}$")
                 .map(|re| re.is_match(&lower))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             if regex::Regex::new(r"^season[\s._-]?\d{1,2}$")
                 .map(|re| re.is_match(&lower))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             if regex::Regex::new(r"^第\d{1,2}季$")
                 .map(|re| re.is_match(name))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             // Skip per-episode folders: "NIGEHAJI.E05.720p", "Show.S01E01.WEB"
             // These contain episode numbers and are NOT show titles
             if regex::Regex::new(r"(?i)[\.\s_-]s\d{1,2}e\d{1,3}[\.\s_-]")
                 .map(|re| re.is_match(name))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             if regex::Regex::new(r"(?i)[\.\s_-]e\d{1,3}[\.\s_-]")
                 .map(|re| re.is_match(name))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             // Also match at start/end: "E01.720p" or "Show.E05"
             if regex::Regex::new(r"(?i)^e\d{1,3}[\.\s_-]|[\.\s_-]e\d{1,3}$")
                 .map(|re| re.is_match(name))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             false
@@ -2023,55 +2174,63 @@ impl Planner {
     }
 
     /// Build the input string for AI parsing.
-    /// 
+    ///
     /// If the file is in a subdirectory with a meaningful name, include it for better context.
     /// This function now uses intelligent parent directory lookup to skip meaningless
     /// subdirectories like "4K", "S01", "WEB-DL" etc., and removes sorting prefixes.
     fn build_parse_input(&self, video: &VideoFile) -> String {
         // Use intelligent parent lookup to skip meaningless directories
         let (parent_name, depth) = Self::find_meaningful_parent_name(video);
-        
+
         // Strip sorting prefix from parent name (A_, X_, 01_, etc.)
         let clean_parent = Self::strip_sorting_prefix(&parent_name);
-        
+
         // Check if filename lacks meaningful title info
         // (e.g., just year + format like "2024 SP.mp4" or "E01.mkv")
         let filename_seems_minimal = self.is_minimal_filename(&video.filename);
-        
+
         // Check if parent directory has meaningful name (after stripping prefix)
-        let parent_has_title = !clean_parent.is_empty() 
-            && clean_parent != "Movies" 
+        let parent_has_title = !clean_parent.is_empty()
+            && clean_parent != "Movies"
             && clean_parent != "movies"
             && clean_parent != "TvShows"
             && clean_parent != "tvshows"
             && !clean_parent.starts_with(".")
             && clean_parent.len() > 3;
-        
+
         // NEW: Check if parent has CJK characters but filename is mostly Latin
         // This handles cases like "逃避虽可耻但有用/NIGEHAJI.E01.720p.FIX字幕侠/..."
         // where the parent dir has the proper CJK title but filename uses romanized name
         let parent_has_cjk = clean_parent.chars().any(|c| {
             matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3040}'..='\u{30ff}' | '\u{ac00}'..='\u{d7af}')
         });
-        
+
         // Count meaningful CJK characters in filename (excluding common ones like 字幕侠)
         let filename_cjk_count = video.filename.chars()
             .filter(|c| matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3040}'..='\u{30ff}' | '\u{ac00}'..='\u{d7af}'))
             .count();
-        
+
         // If parent has CJK title but filename is romanized (few CJK chars), use parent context
         // This is important for shows like NIGEHAJI (逃げ恥) where filename uses romanized name
-        let filename_is_romanized = filename_cjk_count < 5 && 
-            video.filename.chars().take(20).filter(|c| c.is_ascii_alphabetic()).count() >= 5;
-        
-        let needs_parent_context = filename_seems_minimal || 
-            (parent_has_cjk && filename_is_romanized && parent_has_title);
-        
+        let filename_is_romanized = filename_cjk_count < 5
+            && video
+                .filename
+                .chars()
+                .take(20)
+                .filter(|c| c.is_ascii_alphabetic())
+                .count()
+                >= 5;
+
+        let needs_parent_context =
+            filename_seems_minimal || (parent_has_cjk && filename_is_romanized && parent_has_title);
+
         if needs_parent_context && parent_has_title {
             // Combine parent dir name and filename for better context
             tracing::info!(
                 "Using parent dir for context: '{}' + '{}' (depth: {})",
-                clean_parent, video.filename, depth
+                clean_parent,
+                video.filename,
+                depth
             );
             format!("{} - {}", clean_parent, video.filename)
         } else {
@@ -2080,7 +2239,7 @@ impl Planner {
     }
 
     /// Extract candidate metadata using the unified metadata extraction system.
-    /// 
+    ///
     /// This method implements the new processing flow:
     /// 1. Check if file is already organized format -> extract TMDB ID
     /// 2. Check if file is in organized folder -> extract TMDB ID from folder
@@ -2115,10 +2274,10 @@ impl Planner {
                 };
             }
         }
-        
+
         // Phase 2: Check for organized folder in ancestry
-        if let Some((DirectoryType::OrganizedDirectory(info), _path)) = 
-            metadata::find_title_directory(&video.parent_dir) 
+        if let Some((DirectoryType::OrganizedDirectory(info), _path)) =
+            metadata::find_title_directory(&video.parent_dir)
         {
             // Extract episode info from filename
             let (season, episode) = parser::extract_episode_from_filename(&video.filename);
@@ -2134,10 +2293,10 @@ impl Planner {
                 ..Default::default()
             };
         }
-        
+
         // Phase 3: Extract from filename
         let filename_info = metadata::extract_from_filename(&video.filename);
-        
+
         // Phase 4: Extract from directory
         let mut dir_info = CandidateMetadata::default();
         if let Some(parent_name) = video.parent_dir.file_name().and_then(|n| n.to_str()) {
@@ -2155,7 +2314,9 @@ impl Planner {
                     dir_info.season = Some(season);
                     if let Some(grandparent) = video.parent_dir.parent() {
                         if let Some(name) = grandparent.file_name().and_then(|n| n.to_str()) {
-                            if let DirectoryType::TitleDirectory(title_info) = metadata::classify_directory(name) {
+                            if let DirectoryType::TitleDirectory(title_info) =
+                                metadata::classify_directory(name)
+                            {
                                 dir_info.chinese_title = title_info.chinese_title;
                                 dir_info.english_title = title_info.english_title;
                                 dir_info.year = title_info.year;
@@ -2176,17 +2337,17 @@ impl Planner {
                 _ => {}
             }
         }
-        
+
         // Phase 5: Merge info (filename takes priority)
         let merged = metadata::merge_info(filename_info.clone(), dir_info);
-        
+
         // If we still don't have enough info, mark for AI parsing
         if !merged.has_searchable_info() {
             let mut result = merged;
             result.needs_ai_parsing = true;
             return result;
         }
-        
+
         merged
     }
 
@@ -2226,7 +2387,7 @@ impl Planner {
 
         // Try to find a country matching the original language
         let preferred_country = lang_to_country(original_language);
-        
+
         let (code, name) = if let Some(pref_code) = preferred_country {
             // Find the index of the preferred country
             if let Some(idx) = codes.iter().position(|c| c.eq_ignore_ascii_case(pref_code)) {
@@ -2256,25 +2417,25 @@ impl Planner {
     }
 
     /// Deduplicate operations across all items.
-    /// 
+    ///
     /// This handles cases where:
     /// 1. Multiple videos in the same directory share subtitles (Move operations)
     /// 2. Multiple episodes share the same tvshow.nfo (Create operations)
     /// 3. Multiple episodes share the same poster.jpg (Download operations)
-    /// 
+    ///
     /// When two items have the same target file, keep only the first occurrence.
     fn deduplicate_operations(&self, items: &mut [PlanItem]) {
         use std::collections::HashSet;
-        
+
         // Track seen sources (for Move operations - to avoid moving same file twice)
         let mut seen_sources: HashSet<PathBuf> = HashSet::new();
         // Track seen targets (for Create/Download operations - to avoid creating/downloading same file twice)
         let mut seen_targets: HashSet<PathBuf> = HashSet::new();
         let mut removed_count = 0;
-        
+
         for item in items.iter_mut() {
             let original_len = item.operations.len();
-            
+
             item.operations.retain(|op| {
                 match op.op {
                     OperationType::Move => {
@@ -2298,10 +2459,10 @@ impl Planner {
                 }
                 true
             });
-            
+
             removed_count += original_len - item.operations.len();
         }
-        
+
         if removed_count > 0 {
             tracing::info!(
                 "Deduplicated {} duplicate operations (shared files)",
@@ -2314,9 +2475,9 @@ impl Planner {
     /// This prevents data loss from files overwriting each other.
     fn validate_no_duplicate_targets(&self, items: &[PlanItem]) -> Result<()> {
         use std::collections::HashMap;
-        
+
         let mut target_to_sources: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-        
+
         for item in items {
             for op in &item.operations {
                 if matches!(op.op, OperationType::Move) {
@@ -2327,15 +2488,17 @@ impl Planner {
                 }
             }
         }
-        
+
         let duplicates: Vec<_> = target_to_sources
             .iter()
             .filter(|(_, sources)| sources.len() > 1)
             .collect();
-        
+
         if !duplicates.is_empty() {
-            let mut error_msg = String::from("CRITICAL: Duplicate target paths detected! This would cause data loss.\n\n");
-            
+            let mut error_msg = String::from(
+                "CRITICAL: Duplicate target paths detected! This would cause data loss.\n\n",
+            );
+
             for (target, sources) in duplicates.iter() {
                 error_msg.push_str(&format!("Target: {:?}\n", target));
                 error_msg.push_str("  Would overwrite these source files:\n");
@@ -2344,7 +2507,7 @@ impl Planner {
                 }
                 error_msg.push('\n');
             }
-            
+
             let total_affected: usize = duplicates.iter().map(|(_, s)| s.len()).sum();
             error_msg.push_str(&format!(
                 "Total: {} duplicate targets affecting {} files.\n",
@@ -2352,11 +2515,11 @@ impl Planner {
                 total_affected
             ));
             error_msg.push_str("Plan generation aborted to prevent data loss.");
-            
+
             tracing::error!("{}", error_msg);
             return Err(crate::Error::other(error_msg));
         }
-        
+
         tracing::info!("Safety check passed: No duplicate target paths");
         Ok(())
     }
@@ -2368,7 +2531,7 @@ impl Planner {
         // Split by common delimiters
         // Common delimiters for splitting long titles (ASCII only for compatibility)
         let delimiters = [" - ", ":", " "];
-        
+
         for delim in delimiters {
             if let Some(pos) = title.find(delim) {
                 let shortened = title[..pos].trim().to_string();
@@ -2378,7 +2541,7 @@ impl Planner {
                 }
             }
         }
-        
+
         // For very long titles (>20 chars), try taking just the first part before space
         if title.chars().count() > 20 {
             // Split by space and take progressively longer parts
@@ -2395,65 +2558,81 @@ impl Planner {
 
     fn is_minimal_filename(&self, filename: &str) -> bool {
         let name = filename.to_lowercase();
-        
+
         // Remove extension
         let name_without_ext = if let Some(pos) = name.rfind('.') {
             &name[..pos]
         } else {
             &name
         };
-        
+
         // Count meaningful characters (excluding common technical terms)
-        let alphanumeric_count = name_without_ext.chars().filter(|c| c.is_alphanumeric()).count();
-        
+        let alphanumeric_count = name_without_ext
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .count();
+
         // If the meaningful part is very short, consider it minimal
         if alphanumeric_count <= 8 {
             return true;
         }
-        
+
         // Check if filename is mostly technical info (codec, resolution, release group)
         // Pattern: "11.4K.H265.AAC-YYDS" - starts with episode number followed by tech info
-        let tech_terms = ["4k", "1080p", "720p", "2160p", "h264", "h265", "hevc", "x264", "x265", 
-                         "aac", "dts", "ac3", "flac", "web-dl", "webrip", "bluray", "bdrip",
-                         "hdtv", "dvdrip", "remux", "hdr", "10bit", "8bit"];
-        
+        let tech_terms = [
+            "4k", "1080p", "720p", "2160p", "h264", "h265", "hevc", "x264", "x265", "aac", "dts",
+            "ac3", "flac", "web-dl", "webrip", "bluray", "bdrip", "hdtv", "dvdrip", "remux", "hdr",
+            "10bit", "8bit",
+        ];
+
         let parts: Vec<&str> = name_without_ext.split(['.', '-', '_', ' ']).collect();
-        
+
         // Check if first part is just a number (episode number)
-        let first_is_number = parts.first()
+        let first_is_number = parts
+            .first()
             .map(|p| p.chars().all(|c| c.is_ascii_digit()) && p.len() <= 3)
             .unwrap_or(false);
-        
+
         // Count how many parts are technical terms
-        let tech_count = parts.iter()
+        let tech_count = parts
+            .iter()
             .skip(if first_is_number { 1 } else { 0 })
-            .filter(|p| tech_terms.iter().any(|t| p.contains(t)) || p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
+            .filter(|p| {
+                tech_terms.iter().any(|t| p.contains(t))
+                    || p.chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            })
             .count();
-        
+
         // If most parts are technical or release group names, this is minimal
         if first_is_number && tech_count >= parts.len().saturating_sub(2) {
             tracing::debug!("Filename '{}' detected as minimal (tech-only)", filename);
             return true;
         }
-        
+
         // Check for year-only pattern like "2024 SP"
         if name.contains("sp") || name.contains("ova") || name.contains("特别") {
             let digits: String = name.chars().filter(|c| c.is_ascii_digit()).collect();
-            if digits.len() == 4 && digits.parse::<u16>().map(|y| (1990..=2030).contains(&y)).unwrap_or(false) {
+            if digits.len() == 4
+                && digits
+                    .parse::<u16>()
+                    .map(|y| (1990..=2030).contains(&y))
+                    .unwrap_or(false)
+            {
                 return true;
             }
         }
-        
+
         false
     }
 
     /// Strip sorting prefix from a directory or file name.
-    /// 
+    ///
     /// Common sorting prefix patterns:
     /// - Single letter + separator: "A_剧名", "X-电影", "Z.标题"
     /// - Number + separator: "01_剧名", "001-电影", "1.标题"
     /// - These are used for alphabetical/numerical sorting in file managers
-    /// 
+    ///
     /// Examples:
     /// - "X_许你耀眼" → "许你耀眼"
     /// - "H_回魂计" → "回魂计"
@@ -2472,7 +2651,7 @@ impl Planner {
                 }
             }
         }
-        
+
         // Pattern 2: Numbers + separator (_, -, .)
         // e.g., "01_剧名", "001-电影", "1.标题"
         if let Some(re) = regex::Regex::new(r"^(\d{1,3})[_\-.]").ok() {
@@ -2481,21 +2660,25 @@ impl Planner {
                 if prefix_len > 0 && name.len() > prefix_len {
                     let stripped = &name[prefix_len..];
                     if !stripped.is_empty() {
-                        tracing::debug!("Stripped numeric sorting prefix from '{}' -> '{}'", name, stripped);
+                        tracing::debug!(
+                            "Stripped numeric sorting prefix from '{}' -> '{}'",
+                            name,
+                            stripped
+                        );
                         return stripped;
                     }
                 }
             }
         }
-        
+
         name
     }
 
     /// Check if a directory name is "meaningless" for title extraction.
-    /// 
+    ///
     /// These are common technical/organizational subdirectories that don't contain
     /// the actual media title. When encountered, we should look at parent directories.
-    /// 
+    ///
     /// Examples:
     /// - Resolution: "4K", "1080p", "2160p", "720p"
     /// - Season: "S01", "S02", "Season 1", "Season.2"
@@ -2503,7 +2686,7 @@ impl Planner {
     /// - Technical: "HEVC", "x265", "HDR"
     fn is_meaningless_dirname(name: &str) -> bool {
         let lower = name.to_lowercase();
-        
+
         // Resolution patterns
         if regex::Regex::new(r"^(4k|1080p|2160p|720p|480p|uhd|hd|sd)$")
             .map(|re| re.is_match(&lower))
@@ -2511,7 +2694,7 @@ impl Planner {
         {
             return true;
         }
-        
+
         // Season patterns: S01, S02, Season 1, Season.2, 第1季
         if regex::Regex::new(r"^s\d{1,2}$")
             .map(|re| re.is_match(&lower))
@@ -2531,7 +2714,7 @@ impl Planner {
         {
             return true;
         }
-        
+
         // Episode folder patterns: folders containing SxxExx or Exx are per-episode folders
         // e.g., "NIGEHAJI.E05.720p.FIX字幕侠", "Show.S01E01.720p", "E01.1080p"
         // These are NOT show titles, skip them to find the actual show name
@@ -2554,61 +2737,60 @@ impl Planner {
         {
             return true;
         }
-        
+
         // Quality/source patterns
         let quality_patterns = [
-            "web-dl", "webrip", "webdl", "web",
-            "bluray", "blu-ray", "bdrip", "brrip",
-            "dvdrip", "dvd", "hdtv", "hdtvrip",
-            "remux", "encode", "repack",
+            "web-dl", "webrip", "webdl", "web", "bluray", "blu-ray", "bdrip", "brrip", "dvdrip",
+            "dvd", "hdtv", "hdtvrip", "remux", "encode", "repack",
         ];
         if quality_patterns.iter().any(|&p| lower == p) {
             return true;
         }
-        
+
         // Codec patterns (when used as folder name)
         let codec_patterns = [
-            "hevc", "h265", "x265", "h264", "x264", "avc",
-            "hdr", "hdr10", "dolby", "dv", "atmos",
+            "hevc", "h265", "x265", "h264", "x264", "avc", "hdr", "hdr10", "dolby", "dv", "atmos",
         ];
         if codec_patterns.iter().any(|&p| lower == p) {
             return true;
         }
-        
+
         // Common organizational folders
         let org_patterns = ["video", "videos", "media", "downloads", "new", "temp"];
         if org_patterns.iter().any(|&p| lower == p) {
             return true;
         }
-        
+
         false
     }
 
     /// Find the most meaningful parent directory name by skipping technical subdirectories.
-    /// 
+    ///
     /// For a path like: `许你耀眼/4K/01 4K.mp4`
     /// Returns: ("许你耀眼", 2) - the meaningful name and depth
-    /// 
+    ///
     /// For a path like: `暗夜情报员 The.Night.Agent (2023)/S02/S02E01.mp4`
     /// Returns: ("暗夜情报员 The.Night.Agent (2023)", 2) - the meaningful name and depth
-    /// 
+    ///
     /// Max depth is limited to 3 levels to avoid going too far up.
     fn find_meaningful_parent_name(video: &VideoFile) -> (String, usize) {
         const MAX_DEPTH: usize = 3;
         let mut current = video.parent_dir.as_path();
         let mut depth = 1;
-        
+
         while depth <= MAX_DEPTH {
             if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
                 // If this directory name is meaningful, use it
                 if !Self::is_meaningless_dirname(name) {
                     tracing::debug!(
                         "Found meaningful parent at depth {}: '{}' for '{}'",
-                        depth, name, video.filename
+                        depth,
+                        name,
+                        video.filename
                     );
                     return (name.to_string(), depth);
                 }
-                
+
                 // Otherwise, go up one level
                 if let Some(parent) = current.parent() {
                     tracing::debug!(
@@ -2624,19 +2806,20 @@ impl Planner {
                 break;
             }
         }
-        
+
         // Fallback to immediate parent
-        video.parent_dir
+        video
+            .parent_dir
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| (s.to_string(), 1))
             .unwrap_or_default()
     }
-    
+
     /// Find the most meaningful parent directory name and extract season info from path.
-    /// 
+    ///
     /// Returns: (meaningful_name, depth, extracted_season)
-    /// 
+    ///
     /// For a path like: `今夜我用身体恋爱/S1/file.mp4`
     /// Returns: ("今夜我用身体恋爱", 2, Some(1))
     #[allow(dead_code)]
@@ -2645,23 +2828,26 @@ impl Planner {
         let mut current = video.parent_dir.as_path();
         let mut depth = 1;
         let mut extracted_season: Option<u16> = None;
-        
+
         while depth <= MAX_DEPTH {
             if let Some(name) = current.file_name().and_then(|n| n.to_str()) {
                 // Try to extract season from this directory name before deciding if it's meaningful
                 if extracted_season.is_none() {
                     extracted_season = Self::extract_season_from_dirname(name);
                 }
-                
+
                 // If this directory name is meaningful, use it
                 if !Self::is_meaningless_dirname(name) {
                     tracing::debug!(
                         "Found meaningful parent at depth {}: '{}' for '{}', season={:?}",
-                        depth, name, video.filename, extracted_season
+                        depth,
+                        name,
+                        video.filename,
+                        extracted_season
                     );
                     return (name.to_string(), depth, extracted_season);
                 }
-                
+
                 // Otherwise, go up one level
                 if let Some(parent) = current.parent() {
                     tracing::debug!(
@@ -2677,48 +2863,49 @@ impl Planner {
                 break;
             }
         }
-        
+
         // Fallback to immediate parent
-        let name = video.parent_dir
+        let name = video
+            .parent_dir
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .unwrap_or_default();
         (name, 1, extracted_season)
     }
-    
+
     /// Extract season number from directory name.
     /// Handles: S01, S1, Season 1, Season.2, 第1季
     #[allow(dead_code)]
     fn extract_season_from_dirname(name: &str) -> Option<u16> {
         let lower = name.to_lowercase();
-        
+
         // Pattern: S01, S1
         if let Ok(re) = regex::Regex::new(r"^s(\d{1,2})$") {
             if let Some(caps) = re.captures(&lower) {
                 return caps.get(1).and_then(|m| m.as_str().parse().ok());
             }
         }
-        
+
         // Pattern: Season 1, Season.2, Season_3
         if let Ok(re) = regex::Regex::new(r"^season[\s._-]?(\d{1,2})$") {
             if let Some(caps) = re.captures(&lower) {
                 return caps.get(1).and_then(|m| m.as_str().parse().ok());
             }
         }
-        
+
         // Pattern: 第1季
         if let Ok(re) = regex::Regex::new(r"^第(\d{1,2})季$") {
             if let Some(caps) = re.captures(name) {
                 return caps.get(1).and_then(|m| m.as_str().parse().ok());
             }
         }
-        
+
         None
     }
 
     /// Try to get movie metadata directly using TMDB ID or IMDB ID from filename.
-    /// 
+    ///
     /// This is the highest priority lookup - if we have an ID, skip AI parsing entirely.
     /// Returns None if no ID found or lookup fails.
     async fn try_direct_id_lookup(
@@ -2735,7 +2922,11 @@ impl Planner {
             tracing::debug!("[DIRECT-ID] Trying TMDB ID: {}", tmdb_id);
             match self.get_movie_details(client, tmdb_id).await {
                 Ok(Some(movie)) => {
-                    tracing::info!("[DIRECT-ID] Found movie via TMDB ID {}: {}", tmdb_id, movie.title);
+                    tracing::info!(
+                        "[DIRECT-ID] Found movie via TMDB ID {}: {}",
+                        tmdb_id,
+                        movie.title
+                    );
                     return Ok(Some(movie));
                 }
                 Ok(None) => {
@@ -2755,14 +2946,26 @@ impl Planner {
                     tracing::info!("[DIRECT-ID] IMDB {} -> TMDB {}", imdb_id, tmdb_id);
                     match self.get_movie_details(client, tmdb_id).await {
                         Ok(Some(movie)) => {
-                            tracing::info!("[DIRECT-ID] Found movie via IMDB ID {}: {}", imdb_id, movie.title);
+                            tracing::info!(
+                                "[DIRECT-ID] Found movie via IMDB ID {}: {}",
+                                imdb_id,
+                                movie.title
+                            );
                             return Ok(Some(movie));
                         }
                         Ok(None) => {
-                            tracing::warn!("[DIRECT-ID] TMDB ID {} (from IMDB {}) returned no results", tmdb_id, imdb_id);
+                            tracing::warn!(
+                                "[DIRECT-ID] TMDB ID {} (from IMDB {}) returned no results",
+                                tmdb_id,
+                                imdb_id
+                            );
                         }
                         Err(e) => {
-                            tracing::warn!("[DIRECT-ID] TMDB lookup for IMDB {} failed: {}", imdb_id, e);
+                            tracing::warn!(
+                                "[DIRECT-ID] TMDB lookup for IMDB {} failed: {}",
+                                imdb_id,
+                                e
+                            );
                         }
                     }
                 }
@@ -2779,12 +2982,12 @@ impl Planner {
     }
 
     /// Try to find a TV show TMDB ID by looking at parent directories.
-    /// 
+    ///
     /// This is used when the current directory's IMDB ID is not found in TMDB.
-    /// For example, season-specific IMDB IDs (tt13660696 for Slow Horses S2) are not 
+    /// For example, season-specific IMDB IDs (tt13660696 for Slow Horses S2) are not
     /// recognized by TMDB's find API, but the parent directory might have the show's
     /// main IMDB ID (tt5875444 for Slow Horses).
-    /// 
+    ///
     /// Returns Some(tmdb_id) if found, None otherwise.
     async fn try_parent_directory_id_lookup(
         &self,
@@ -2794,23 +2997,23 @@ impl Planner {
     ) -> Option<u64> {
         // Get the parent directory of the file
         let parent_dir = file_path.parent()?;
-        
+
         // Look for IDs starting from the parent's parent (skip the current season directory)
         // e.g., for /L_流人/S02.tt13660696/file.mp4, we want to look at /L_流人/
         let (parent_tmdb_id, parent_imdb_id) = metadata::extract_ids_from_path_starting_at(
-            file_path,
-            parent_dir,  // Start from parent of parent (skip season dir)
+            file_path, parent_dir, // Start from parent of parent (skip season dir)
         );
-        
+
         // If we found a TMDB ID directly, use it
         if let Some(tmdb_id) = parent_tmdb_id {
             tracing::info!(
                 "[PARENT-ID] Found TMDB ID {} in parent directory (after {} failed)",
-                tmdb_id, failed_imdb_id
+                tmdb_id,
+                failed_imdb_id
             );
             return Some(tmdb_id);
         }
-        
+
         // If we found a different IMDB ID, try to resolve it
         if let Some(ref imdb_id) = parent_imdb_id {
             if imdb_id != failed_imdb_id {
@@ -2818,7 +3021,9 @@ impl Planner {
                     Ok(Some(tmdb_id)) => {
                         tracing::info!(
                             "[PARENT-ID] Resolved parent IMDB {} -> TMDB {} (after {} failed)",
-                            imdb_id, tmdb_id, failed_imdb_id
+                            imdb_id,
+                            tmdb_id,
+                            failed_imdb_id
                         );
                         return Some(tmdb_id);
                     }
@@ -2831,13 +3036,14 @@ impl Planner {
                     Err(e) => {
                         tracing::debug!(
                             "[PARENT-ID] Failed to lookup parent IMDB {}: {}",
-                            imdb_id, e
+                            imdb_id,
+                            e
                         );
                     }
                 }
             }
         }
-        
+
         None
     }
 
@@ -2848,12 +3054,12 @@ impl Planner {
     }
 
     /// Query TMDB for movie metadata with optional IMDB ID.
-    /// 
+    ///
     /// Priority:
     /// 1. If IMDB ID is provided, use find API to get TMDB ID directly (highest priority)
     /// 2. Otherwise, search by title with various strategies
     async fn query_tmdb_movie_with_imdb(
-        &self, 
+        &self,
         parsed: &ParsedFilename,
         imdb_id: Option<&str>,
     ) -> Result<Option<MovieMetadata>> {
@@ -2880,10 +3086,14 @@ impl Planner {
         }
 
         // Extract Chinese and English titles, filtering out meaningless ones
-        let chinese_title = parsed.title.clone()
+        let chinese_title = parsed
+            .title
+            .clone()
             .filter(|t| !t.is_empty())
             .filter(|t| self.is_meaningful_title(t));
-        let english_title = parsed.original_title.clone()
+        let english_title = parsed
+            .original_title
+            .clone()
             .filter(|t| !t.is_empty())
             .filter(|t| self.is_meaningful_title(t));
 
@@ -2891,18 +3101,21 @@ impl Planner {
         if chinese_title.is_none() && english_title.is_none() {
             tracing::warn!(
                 "Both titles are meaningless, cannot search TMDB: chinese={:?}, english={:?}",
-                parsed.title, parsed.original_title
+                parsed.title,
+                parsed.original_title
             );
             return Ok(None);
         }
 
         tracing::debug!(
             "TMDB movie search: chinese={:?}, english={:?}, year={:?}",
-            chinese_title, english_title, parsed.year
+            chinese_title,
+            english_title,
+            parsed.year
         );
 
         // Strategy: Search with both titles and find intersection first
-        // Priority: 1) Common results (both titles match) 
+        // Priority: 1) Common results (both titles match)
         //           2) English title results
         //           3) Chinese title results
 
@@ -2931,13 +3144,14 @@ impl Planner {
 
         // Priority 1: Find common results (intersection by TMDB ID)
         if !chinese_results.is_empty() && !english_results.is_empty() {
-            let chinese_ids: std::collections::HashSet<u64> = 
+            let chinese_ids: std::collections::HashSet<u64> =
                 chinese_results.iter().map(|r| r.id).collect();
-            
-            let common: Vec<_> = english_results.iter()
+
+            let common: Vec<_> = english_results
+                .iter()
                 .filter(|r| chinese_ids.contains(&r.id))
                 .collect();
-            
+
             if !common.is_empty() {
                 let query = english_title.as_deref().unwrap_or("");
                 if let Some(best) = self.select_best_movie_match_ref(&common, query) {
@@ -2958,8 +3172,11 @@ impl Planner {
             if let Some(best) = self.select_best_movie_match(&english_results, query) {
                 let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
                 if self.is_reasonable_match_with_year(
-                    query, &best.title, &best.original_title, 
-                    parsed.year, tmdb_year
+                    query,
+                    &best.title,
+                    &best.original_title,
+                    parsed.year,
+                    tmdb_year,
                 ) {
                     tracing::info!("TMDB found (English match): {}", best.title);
                     return self.get_movie_details(client, best.id).await;
@@ -2973,8 +3190,11 @@ impl Planner {
             if let Some(best) = self.select_best_movie_match(&chinese_results, query) {
                 let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
                 if self.is_reasonable_match_with_year(
-                    query, &best.title, &best.original_title,
-                    parsed.year, tmdb_year
+                    query,
+                    &best.title,
+                    &best.original_title,
+                    parsed.year,
+                    tmdb_year,
                 ) {
                     tracing::info!("TMDB found (Chinese match): {}", best.title);
                     return self.get_movie_details(client, best.id).await;
@@ -2986,15 +3206,18 @@ impl Planner {
         if let Some(ref title) = chinese_title {
             let mut shortened_queries: Vec<String> = Vec::new();
             self.add_shortened_queries(&mut shortened_queries, title);
-            
+
             for query in &shortened_queries {
                 let results = client.search_movie(query, parsed.year).await?;
                 if !results.is_empty() {
                     if let Some(best) = self.select_best_movie_match(&results, query) {
                         let tmdb_year = Self::extract_year_from_release_date(&best.release_date);
                         if self.is_reasonable_match_with_year(
-                            query, &best.title, &best.original_title,
-                            parsed.year, tmdb_year
+                            query,
+                            &best.title,
+                            &best.original_title,
+                            parsed.year,
+                            tmdb_year,
                         ) {
                             tracing::info!("TMDB found (shortened query): {}", best.title);
                             return self.get_movie_details(client, best.id).await;
@@ -3006,7 +3229,8 @@ impl Planner {
 
         tracing::warn!(
             "TMDB: No match found for chinese={:?}, english={:?}",
-            chinese_title, english_title
+            chinese_title,
+            english_title
         );
         Ok(None)
     }
@@ -3038,16 +3262,21 @@ impl Planner {
             }
 
             let mut score = movie.vote_count.unwrap_or(0) as i64;
-            if year > 0 { score += 100; }
+            if year > 0 {
+                score += 100;
+            }
 
             // Bonus for title match
             let title_normalized = self.normalize_title(&movie.title);
             let original_normalized = self.normalize_title(&movie.original_title);
 
-            let is_exact = title_normalized == query_normalized || original_normalized == query_normalized;
+            let is_exact =
+                title_normalized == query_normalized || original_normalized == query_normalized;
             if is_exact {
                 score += 10000;
-            } else if title_normalized.contains(&query_normalized) || original_normalized.contains(&query_normalized) {
+            } else if title_normalized.contains(&query_normalized)
+                || original_normalized.contains(&query_normalized)
+            {
                 score += 1000;
             }
 
@@ -3081,31 +3310,31 @@ impl Planner {
     /// Filters out single-character Chinese titles, common placeholder words, etc.
     fn is_meaningful_title(&self, title: &str) -> bool {
         let trimmed = title.trim();
-        
+
         // Empty or whitespace only
         if trimmed.is_empty() {
             return false;
         }
-        
+
         // Single character (especially problematic for CJK)
         let char_count = trimmed.chars().count();
         if char_count <= 1 {
             tracing::debug!("Filtering meaningless single-char title: '{}'", trimmed);
             return false;
         }
-        
+
         // Common placeholder/meaningless words
         const MEANINGLESS_WORDS: &[&str] = &[
-            "无", "是", "的", "了", "在", "有", "和", "与",
-            "null", "none", "unknown", "untitled", "n/a",
+            "无", "是", "的", "了", "在", "有", "和", "与", "null", "none", "unknown", "untitled",
+            "n/a",
         ];
-        
+
         let lower = trimmed.to_lowercase();
         if MEANINGLESS_WORDS.iter().any(|w| lower == *w) {
             tracing::debug!("Filtering meaningless placeholder title: '{}'", trimmed);
             return false;
         }
-        
+
         // Very short titles that look like technical info
         if char_count <= 3 {
             // Check if it looks like resolution/format
@@ -3115,7 +3344,7 @@ impl Planner {
                 return false;
             }
         }
-        
+
         true
     }
 
@@ -3123,9 +3352,9 @@ impl Planner {
     /// query_year: the year from parsed filename
     /// tmdb_year: the year from TMDB result
     fn is_reasonable_match_with_year(
-        &self, 
-        query: &str, 
-        tmdb_title: &str, 
+        &self,
+        query: &str,
+        tmdb_title: &str,
         tmdb_orig: &str,
         query_year: Option<u16>,
         tmdb_year: Option<u16>,
@@ -3136,12 +3365,14 @@ impl Planner {
             if diff > 1 {
                 tracing::debug!(
                     "Year mismatch too large: query={}, tmdb={}, diff={}",
-                    qy, ty, diff
+                    qy,
+                    ty,
+                    diff
                 );
                 return false;
             }
         }
-        
+
         let query_lower = query.to_lowercase();
         let title_lower = tmdb_title.to_lowercase();
         let orig_lower = tmdb_orig.to_lowercase();
@@ -3156,10 +3387,12 @@ impl Planner {
 
         // Check for significant word overlap (for CJK languages)
         // But require more overlap for short queries to avoid false matches
-        let query_chars: std::collections::HashSet<char> = query.chars()
+        let query_chars: std::collections::HashSet<char> = query
+            .chars()
             .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
             .collect();
-        let title_chars: std::collections::HashSet<char> = tmdb_title.chars()
+        let title_chars: std::collections::HashSet<char> = tmdb_title
+            .chars()
             .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
             .collect();
 
@@ -3167,7 +3400,7 @@ impl Planner {
         let query_len = query_chars.len();
         let title_len = title_chars.len();
         let min_len = query_len.min(title_len);
-        
+
         // For very short queries (<=3 chars), require exact match
         if query_len <= 3 {
             if common == query_len && query_len == title_len {
@@ -3205,26 +3438,33 @@ impl Planner {
         };
 
         // Helper to clean up search query
-        let clean_query = |s: &str| -> String {
-            s.replace(['.', '_'], " ")
-                .trim()
-                .to_string()
-        };
+        let clean_query = |s: &str| -> String { s.replace(['.', '_'], " ").trim().to_string() };
 
         // Extract Chinese and English titles from parsed result
-        let mut chinese_title = parsed.title.as_ref().map(|t| clean_query(t)).filter(|t| !t.is_empty());
-        let mut english_title = parsed.original_title.as_ref().map(|t| clean_query(t)).filter(|t| !t.is_empty());
+        let mut chinese_title = parsed
+            .title
+            .as_ref()
+            .map(|t| clean_query(t))
+            .filter(|t| !t.is_empty());
+        let mut english_title = parsed
+            .original_title
+            .as_ref()
+            .map(|t| clean_query(t))
+            .filter(|t| !t.is_empty());
         let mut folder_year: Option<u16> = parsed.year;
-        
+
         // Smart parsing of folder name to extract Chinese/English titles and year
         // Format: "中文标题 English Title (2022)" or similar variations
         if let Some(folder) = folder_name {
             tracing::debug!("[FOLDER] Processing folder name: '{}'", folder);
-            
-            let is_quality_desc = folder.contains("1080") || folder.contains("720") 
-                || folder.contains("2160") || folder.contains("4K")
-                || folder.contains("内封") || folder.contains("外挂");
-            
+
+            let is_quality_desc = folder.contains("1080")
+                || folder.contains("720")
+                || folder.contains("2160")
+                || folder.contains("4K")
+                || folder.contains("内封")
+                || folder.contains("外挂");
+
             if !is_quality_desc {
                 // Extract year from parentheses: (2022)
                 let year_re = regex::Regex::new(r"\((\d{4})\)").unwrap();
@@ -3234,37 +3474,41 @@ impl Planner {
                         tracing::debug!("[FOLDER] Extracted year: {:?}", folder_year);
                     }
                 }
-                
+
                 // Remove year and brackets, then split Chinese and English
                 let cleaned = year_re.replace_all(folder, "").to_string();
                 // Strip sorting prefix (A_, X_, 01_, etc.)
                 let cleaned = Self::strip_sorting_prefix(&cleaned);
                 // Replace separators with spaces for better parsing
-                let cleaned = cleaned
-                    .replace(['.', '_', '-'], " ")
-                    .trim()
-                    .to_string();
-                
+                let cleaned = cleaned.replace(['.', '_', '-'], " ").trim().to_string();
+
                 tracing::debug!("[FOLDER] Cleaned folder name: '{}'", cleaned);
-                
+
                 // Extract Chinese portion (consecutive CJK characters and punctuation)
-                let chinese_re = regex::Regex::new(r"[\u4e00-\u9fff\u3000-\u303f\u00b7\uff01-\uff5e]+").unwrap();
-                let folder_chinese: String = chinese_re.find_iter(&cleaned)
+                let chinese_re =
+                    regex::Regex::new(r"[\u4e00-\u9fff\u3000-\u303f\u00b7\uff01-\uff5e]+").unwrap();
+                let folder_chinese: String = chinese_re
+                    .find_iter(&cleaned)
                     .map(|m| m.as_str())
                     .collect::<Vec<_>>()
                     .join(" ")
                     .trim()
                     .to_string();
-                
+
                 // Extract English portion (remaining non-CJK characters)
-                let folder_english: String = chinese_re.replace_all(&cleaned, " ")
+                let folder_english: String = chinese_re
+                    .replace_all(&cleaned, " ")
                     .split_whitespace()
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
                     .join(" ");
-                
-                tracing::debug!("[FOLDER] Extracted Chinese: '{}', English: '{}'", folder_chinese, folder_english);
-                
+
+                tracing::debug!(
+                    "[FOLDER] Extracted Chinese: '{}', English: '{}'",
+                    folder_chinese,
+                    folder_english
+                );
+
                 // Use folder-extracted titles as fallback if AI didn't provide them
                 if chinese_title.is_none() && !folder_chinese.is_empty() {
                     tracing::info!("[FOLDER] Using folder Chinese title: '{}'", folder_chinese);
@@ -3278,13 +3522,15 @@ impl Planner {
                 tracing::debug!("[FOLDER] Skipped quality descriptor folder: '{}'", folder);
             }
         }
-        
+
         // Use extracted year
         let search_year = folder_year.or(parsed.year);
 
         tracing::debug!(
             "TMDB TV search: chinese={:?}, english={:?}, year={:?}",
-            chinese_title, english_title, search_year
+            chinese_title,
+            english_title,
+            search_year
         );
 
         // Strategy: Search with both titles and find intersection first
@@ -3317,14 +3563,15 @@ impl Planner {
 
         // Priority 1: Find common results (intersection by TMDB ID)
         if !chinese_results.is_empty() && !english_results.is_empty() {
-            let chinese_ids: std::collections::HashSet<u64> = 
+            let chinese_ids: std::collections::HashSet<u64> =
                 chinese_results.iter().map(|r| r.id).collect();
-            
-            let common: Vec<_> = english_results.iter()
+
+            let common: Vec<_> = english_results
+                .iter()
                 .filter(|r| chinese_ids.contains(&r.id))
                 .cloned()
                 .collect();
-            
+
             if !common.is_empty() {
                 let query = english_title.as_deref().unwrap_or("");
                 if let Some(best) = self.select_best_tv_match(query, &common) {
@@ -3341,7 +3588,7 @@ impl Planner {
 
         // Priority 2: Chinese title results (preferred for Asian content)
         // Chinese title is more specific and less likely to match wrong international content
-        // e.g., "神探伽利略" will correctly match the Japanese show, 
+        // e.g., "神探伽利略" will correctly match the Japanese show,
         // while "Galileo" might match the German show
         if !chinese_results.is_empty() {
             let query = chinese_title.as_deref().unwrap_or("");
@@ -3362,7 +3609,9 @@ impl Planner {
 
         tracing::warn!(
             "TMDB TV: No match found for chinese={:?}, english={:?}, year={:?}",
-            chinese_title, english_title, search_year
+            chinese_title,
+            english_title,
+            search_year
         );
         Ok((None, None))
     }
@@ -3385,17 +3634,18 @@ impl Planner {
         // This handles cases like searching "人生复本" returning "Dark Matter".
         // TMDB internally maps Chinese titles to original titles.
         let is_pure_cjk = query.chars().all(|c| {
-            c.is_whitespace() || 
-            ('\u{4E00}'..='\u{9FFF}').contains(&c) || // CJK Unified Ideographs
-            ('\u{3400}'..='\u{4DBF}').contains(&c) || // CJK Extension A
-            ('\u{AC00}'..='\u{D7AF}').contains(&c) || // Korean Hangul
-            ('\u{3040}'..='\u{30FF}').contains(&c)    // Japanese Hiragana/Katakana
+            c.is_whitespace()
+                || ('\u{4E00}'..='\u{9FFF}').contains(&c) // CJK Unified Ideographs
+                || ('\u{3400}'..='\u{4DBF}').contains(&c) // CJK Extension A
+                || ('\u{AC00}'..='\u{D7AF}').contains(&c) // Korean Hangul
+                || ('\u{3040}'..='\u{30FF}').contains(&c) // Japanese Hiragana/Katakana
         }) && query.chars().any(|c| !c.is_whitespace());
-        
+
         if is_pure_cjk && results.len() == 1 {
             tracing::info!(
                 "TMDB single result for CJK query '{}': trusting result '{}'",
-                query, results[0].name
+                query,
+                results[0].name
             );
             return Some(&results[0]);
         }
@@ -3429,20 +3679,23 @@ impl Planner {
             else if name_lower.contains(&query_lower) || orig_lower.contains(&query_lower) {
                 // Base score for contains match
                 score += 100;
-                
+
                 // IMPROVED: Prioritize results whose title length is close to query length
                 // This helps "流人" (query) match "流人" (result) better than "千古风流人物" (result)
                 // If result name length is within 2 chars of query, it's likely an exact or near-exact match
                 let query_len = query.chars().count();
                 let name_len = show.name.chars().count();
                 let len_diff = (name_len as i32 - query_len as i32).abs();
-                
+
                 if len_diff <= 2 {
                     // Near-exact length match - boost significantly
                     score += 800; // Total: 900, just below exact match
                     tracing::debug!(
                         "Near-exact length match: '{}' (len {}) vs query '{}' (len {})",
-                        show.name, name_len, query, query_len
+                        show.name,
+                        name_len,
+                        query,
+                        query_len
                     );
                 } else if len_diff <= 5 {
                     // Reasonably close length - moderate boost
@@ -3466,11 +3719,7 @@ impl Planner {
                 }
             }
 
-            tracing::debug!(
-                "TV match candidate: {} (score: {})",
-                show.name,
-                score
-            );
+            tracing::debug!("TV match candidate: {} (score: {})", show.name, score);
 
             scored_results.push((i, score));
         }
@@ -3489,7 +3738,7 @@ impl Planner {
         // Score tiers: 1000 (exact), 400-500 (prefix/contains), <100 (weak)
         if scored_results.len() > 1 {
             let (_, second_score) = scored_results[1];
-            
+
             // Check if both are in the same score tier (within 100 points)
             // OR if best is not an exact match and second is close
             let is_ambiguous = if best_score >= 1000 {
@@ -3499,16 +3748,20 @@ impl Planner {
                 // Both are prefix/contains matches - ambiguous!
                 tracing::warn!(
                     "Ambiguous TV match: '{}' (score {}) vs '{}' (score {}) - skipping",
-                    results[best_idx].name, best_score,
-                    results[scored_results[1].0].name, second_score
+                    results[best_idx].name,
+                    best_score,
+                    results[scored_results[1].0].name,
+                    second_score
                 );
                 true
             } else if best_score - second_score < 100 && best_score < 500 {
                 // Scores too close and not high enough - ambiguous
                 tracing::warn!(
                     "Ambiguous TV match (close scores): '{}' ({}) vs '{}' ({}) - skipping",
-                    results[best_idx].name, best_score,
-                    results[scored_results[1].0].name, second_score
+                    results[best_idx].name,
+                    best_score,
+                    results[scored_results[1].0].name,
+                    second_score
                 );
                 true
             } else {
@@ -3524,7 +3777,8 @@ impl Planner {
         if best_score < 100 {
             tracing::warn!(
                 "TV match score too low: '{}' (score {}) - skipping",
-                results[best_idx].name, best_score
+                results[best_idx].name,
+                best_score
             );
             return None;
         }
@@ -3555,18 +3809,21 @@ impl Planner {
             .unwrap_or(0);
 
         // Get poster URL
-        let poster_urls = details.poster_path
+        let poster_urls = details
+            .poster_path
             .as_ref()
             .map(|p| vec![format!("https://image.tmdb.org/t/p/original{}", p)])
             .unwrap_or_default();
 
         // Get backdrop URL
-        let backdrop_url = details.backdrop_path.as_ref().map(|p| {
-            client.get_poster_url(p, "original")
-        });
+        let backdrop_url = details
+            .backdrop_path
+            .as_ref()
+            .map(|p| client.get_poster_url(p, "original"));
 
         // Extract genres
-        let genres = details.genres
+        let genres = details
+            .genres
             .as_ref()
             .map(|g| g.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
@@ -3596,19 +3853,22 @@ impl Planner {
         };
 
         // Extract networks
-        let networks = details.networks
+        let networks = details
+            .networks
             .as_ref()
             .map(|n| n.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
         // Extract creators
-        let creators = details.created_by
+        let creators = details
+            .created_by
             .as_ref()
             .map(|c| c.iter().map(|x| x.name.clone()).collect())
             .unwrap_or_default();
 
         // Extract actors (top 10)
-        let actors = details.credits
+        let actors = details
+            .credits
             .as_ref()
             .and_then(|c| c.cast.as_ref())
             .map(|cast| {
@@ -3691,7 +3951,7 @@ impl Planner {
     ) -> Option<&'a crate::services::tmdb::MovieSearchItem> {
         use chrono::Datelike;
         let current_year = chrono::Utc::now().year() as u16;
-        
+
         // Normalize query title for comparison
         let query_normalized = self.normalize_title(query_title);
 
@@ -3709,31 +3969,31 @@ impl Planner {
 
             // Skip future movies (year > current year + 1)
             if year > current_year + 1 {
-                tracing::debug!(
-                    "Skipping far future movie: {} ({})",
-                    movie.title,
-                    year
-                );
+                tracing::debug!("Skipping far future movie: {} ({})", movie.title, year);
                 continue;
             }
 
             // Check for exact title match (highest priority)
             let title_normalized = self.normalize_title(&movie.title);
             let orig_title_normalized = self.normalize_title(&movie.original_title);
-            
-            let exact_match = title_normalized == query_normalized 
-                || orig_title_normalized == query_normalized;
-            
+
+            let exact_match =
+                title_normalized == query_normalized || orig_title_normalized == query_normalized;
+
             // Score calculation
             let exact_match_bonus: i64 = if exact_match { 100000 } else { 0 };
             let vote_count = movie.vote_count.unwrap_or(0) as i64;
             let date_bonus: i64 = if year > 0 { 100 } else { 0 };
-            
+
             let score = exact_match_bonus + vote_count + date_bonus;
 
             tracing::debug!(
                 "Movie candidate: {} (year={}, votes={}, exact={}, score={})",
-                movie.title, year, vote_count, exact_match, score
+                movie.title,
+                year,
+                vote_count,
+                exact_match,
+                score
             );
 
             scored_results.push((i, score, exact_match));
@@ -3752,14 +4012,16 @@ impl Planner {
         // with similar scores, the match is ambiguous
         if !best_exact && scored_results.len() > 1 {
             let (_, second_score, _) = scored_results[1];
-            
+
             // If scores are within 1000 of each other (both have similar vote counts)
             // and neither is an exact match, it's ambiguous
             if best_score - second_score < 1000 {
                 tracing::warn!(
                     "Ambiguous movie match: '{}' (score {}) vs '{}' (score {}) - skipping",
-                    results[best_idx].title, best_score,
-                    results[scored_results[1].0].title, second_score
+                    results[best_idx].title,
+                    best_score,
+                    results[scored_results[1].0].title,
+                    second_score
                 );
                 return None;
             }
@@ -3771,7 +4033,8 @@ impl Planner {
             if vote_count < 10 {
                 tracing::warn!(
                     "Movie match too uncertain (low votes): '{}' ({} votes) - skipping",
-                    results[best_idx].title, vote_count
+                    results[best_idx].title,
+                    vote_count
                 );
                 return None;
             }
@@ -3786,7 +4049,7 @@ impl Planner {
 
         Some(&results[best_idx])
     }
-    
+
     /// Extract year from TMDB release_date format (YYYY-MM-DD).
     fn extract_year_from_release_date(release_date: &Option<String>) -> Option<u16> {
         release_date
@@ -3852,12 +4115,7 @@ impl Planner {
                 c.cast
                     .iter()
                     .take(15)
-                    .map(|m| {
-                        (
-                            m.name.clone(),
-                            m.character.clone().unwrap_or_default(),
-                        )
-                    })
+                    .map(|m| (m.name.clone(), m.character.clone().unwrap_or_default()))
                     .unzip()
             })
             .unwrap_or_default();
@@ -3875,7 +4133,7 @@ impl Planner {
             .as_ref()
             .map(|c| c.iter().map(|x| x.iso_3166_1.clone()).collect())
             .unwrap_or_default();
-        
+
         // Use origin_country as fallback if production_countries is empty
         if country_codes.is_empty() {
             if let Some(ref origin) = details.origin_country {
@@ -3911,7 +4169,9 @@ impl Planner {
             // Try to find US certification first, then CN
             for country in &["US", "CN"] {
                 if let Some(c) = rd.results.iter().find(|r| r.iso_3166_1 == *country) {
-                    if let Some(cert) = c.release_dates.iter()
+                    if let Some(cert) = c
+                        .release_dates
+                        .iter()
                         .filter_map(|r| r.certification.as_ref())
                         .find(|c| !c.is_empty())
                     {
@@ -3929,24 +4189,31 @@ impl Planner {
         }
 
         // Build backdrop URL
-        let backdrop_url = details.backdrop_path.as_ref().map(|p| {
-            client.get_poster_url(p, "original")
-        });
+        let backdrop_url = details
+            .backdrop_path
+            .as_ref()
+            .map(|p| client.get_poster_url(p, "original"));
 
         // Extract collection info (for movie series like "Pirates of the Caribbean")
-        let (collection_id, collection_name, collection_overview, collection_total_movies) = 
+        let (collection_id, collection_name, collection_overview, collection_total_movies) =
             if let Some(ref collection) = details.belongs_to_collection {
                 // Fetch collection details to get total movies count
                 let total = match client.get_collection_details(collection.id).await {
                     Ok(collection_details) => {
                         tracing::debug!(
                             "[COLLECTION] Fetched {} (tmdb{}): {} movies total",
-                            collection.name, collection.id, collection_details.parts.len()
+                            collection.name,
+                            collection.id,
+                            collection_details.parts.len()
                         );
                         Some(collection_details.parts.len())
                     }
                     Err(e) => {
-                        tracing::warn!("[COLLECTION] Failed to fetch collection {}: {}", collection.id, e);
+                        tracing::warn!(
+                            "[COLLECTION] Failed to fetch collection {}: {}",
+                            collection.id,
+                            e
+                        );
                         None
                     }
                 };
@@ -3992,7 +4259,7 @@ impl Planner {
     }
 
     /// Process a sibling movie file using already-matched metadata from the same directory.
-    /// 
+    ///
     /// When multiple video files exist in the same directory (e.g., different resolutions),
     /// this function uses the cached movie metadata from the first matched file.
     async fn process_sibling_movie(
@@ -4025,15 +4292,19 @@ impl Planner {
         };
 
         // Generate target info using the cached movie metadata
-        let (target_info, operations) = self.generate_target_info(
-            video,
-            &Some(cached_movie.clone()),
-            &None,
-            &parsed,
-            &video_metadata,
-            target,
-            MediaType::Movies,
-        )?.ok_or_else(|| crate::Error::other("Failed to generate target info for sibling movie"))?;
+        let (target_info, operations) = self
+            .generate_target_info(
+                video,
+                &Some(cached_movie.clone()),
+                &None,
+                &parsed,
+                &video_metadata,
+                target,
+                MediaType::Movies,
+            )?
+            .ok_or_else(|| {
+                crate::Error::other("Failed to generate target info for sibling movie")
+            })?;
 
         Ok(PlanItem {
             id: uuid::Uuid::new_v4().to_string(),
@@ -4079,9 +4350,9 @@ impl Planner {
 
         let (folder_name, filename, nfo_name, season_folder) = match media_type {
             MediaType::Movies => {
-                let metadata = movie_metadata.as_ref().ok_or_else(|| {
-                    crate::Error::other("Missing movie metadata")
-                })?;
+                let metadata = movie_metadata
+                    .as_ref()
+                    .ok_or_else(|| crate::Error::other("Missing movie metadata"))?;
 
                 let folder = gen_folder::generate_movie_folder(metadata, None);
                 let filename = gen_filename::generate_movie_filename(
@@ -4095,17 +4366,17 @@ impl Planner {
                 (folder, filename, nfo, None)
             }
             MediaType::TvShows => {
-                let (show, episode) = tvshow_metadata.as_ref().ok_or_else(|| {
-                    crate::Error::other("Missing TV show metadata")
-                })?;
+                let (show, episode) = tvshow_metadata
+                    .as_ref()
+                    .ok_or_else(|| crate::Error::other("Missing TV show metadata"))?;
 
                 // TV show folder: ShowName (Year)
                 let folder = gen_folder::generate_tvshow_folder(show);
-                
+
                 // Season folder: Season XX
                 let season_num = parsed.season.unwrap_or(1);
                 let season_folder_name = format!("Season {:02}", season_num);
-                
+
                 // Episode filename
                 let ep_num = parsed.episode.unwrap_or(1);
                 let ep_meta = episode.clone().unwrap_or_else(|| EpisodeMetadata {
@@ -4122,7 +4393,7 @@ impl Planner {
                     video_metadata,
                     extension,
                 );
-                
+
                 // For TV shows, use tvshow.nfo in root folder (not per-episode)
                 // Jellyfin/Kodi will fetch episode info automatically
                 let nfo = "tvshow.nfo".to_string();
@@ -4134,26 +4405,18 @@ impl Planner {
         // Get country folder name (e.g., "CN_China", "US_UnitedStates")
         // Uses original_language to determine the best country for co-productions
         let country_folder_opt = match media_type {
-            MediaType::Movies => {
-                movie_metadata.as_ref().and_then(|m| {
-                    self.format_country_folder(
-                        &m.country_codes,
-                        &m.countries,
-                        &m.original_language,
-                    )
-                })
-            }
-            MediaType::TvShows => {
-                tvshow_metadata.as_ref().and_then(|(show, _)| {
-                    self.format_country_folder(
-                        &show.country_codes,
-                        &show.countries,
-                        &show.original_language,
-                    )
-                })
-            }
+            MediaType::Movies => movie_metadata.as_ref().and_then(|m| {
+                self.format_country_folder(&m.country_codes, &m.countries, &m.original_language)
+            }),
+            MediaType::TvShows => tvshow_metadata.as_ref().and_then(|(show, _)| {
+                self.format_country_folder(
+                    &show.country_codes,
+                    &show.countries,
+                    &show.original_language,
+                )
+            }),
         };
-        
+
         // Principle: prefer skipping over wrong classification
         // If we can't determine the country, skip this file
         let country_folder = match country_folder_opt {
@@ -4176,7 +4439,7 @@ impl Planner {
             show_folder.clone()
         };
         let target_file = target_folder.join(&filename);
-        
+
         // For TV shows, NFO goes in show root folder; for movies, in movie folder
         let target_nfo = if season_folder.is_some() {
             show_folder.join(&nfo_name)
@@ -4222,16 +4485,20 @@ impl Planner {
             // For TV shows: poster in show folder (which is show_folder, not season folder)
             // Both already include the country_folder layer
             let poster_folder = if season_folder.is_some() {
-                show_folder.clone()  // TV shows: use show_folder (includes country_folder)
+                show_folder.clone() // TV shows: use show_folder (includes country_folder)
             } else {
-                target_folder.clone()  // Movies: use target_folder (includes country_folder)
+                target_folder.clone() // Movies: use target_folder (includes country_folder)
             };
-            
-            let poster_url = movie_metadata.as_ref()
+
+            let poster_url = movie_metadata
+                .as_ref()
                 .and_then(|m| m.poster_urls.first().cloned())
-                .or_else(|| tvshow_metadata.as_ref()
-                    .and_then(|(s, _)| s.poster_urls.first().cloned()));
-            
+                .or_else(|| {
+                    tvshow_metadata
+                        .as_ref()
+                        .and_then(|(s, _)| s.poster_urls.first().cloned())
+                });
+
             if let Some(url) = poster_url {
                 let poster_path = poster_folder.join("poster.jpg");
                 operations.push(Operation {
@@ -4262,11 +4529,11 @@ impl Planner {
     }
 
     /// Add operations to move subtitle files and folders.
-    /// 
+    ///
     /// Detects and moves:
     /// - Subtitle folders: Sub, Subs, Subtitle, Subtitles, etc.
     /// - Subtitle files: .srt, .ass, .ssa, .sub, .idx, .vtt, .sup
-    /// 
+    ///
     /// Files/folders are moved without renaming.
     /// Note: Duplicates are handled by deduplicate_operations() at the plan level.
     fn add_subtitle_operations(
@@ -4276,26 +4543,31 @@ impl Planner {
         operations: &mut Vec<Operation>,
     ) {
         // Subtitle folder names (case-insensitive)
-        const SUBTITLE_FOLDERS: &[&str] = &[
-            "sub", "subs", "subtitle", "subtitles", "字幕",
-        ];
-        
+        const SUBTITLE_FOLDERS: &[&str] = &["sub", "subs", "subtitle", "subtitles", "字幕"];
+
         // Subtitle file extensions
-        const SUBTITLE_EXTENSIONS: &[&str] = &[
-            "srt", "ass", "ssa", "sub", "idx", "vtt", "sup", "smi",
-        ];
-        
+        const SUBTITLE_EXTENSIONS: &[&str] =
+            &["srt", "ass", "ssa", "sub", "idx", "vtt", "sup", "smi"];
+
         // Extras folder patterns (case-insensitive)
         // These contain behind-the-scenes, deleted scenes, featurettes, samples, etc.
         const EXTRAS_PATTERNS: &[&str] = &[
-            "extras", "extra",
-            "featurettes", "featurette",
-            "behind the scenes", "behindthescenes",
-            "deleted scenes", "deletedscenes", 
-            "making of", "makingof",
-            "bonus", "bonuses",
-            "special features", "specialfeatures",
-            "sample", "samples",
+            "extras",
+            "extra",
+            "featurettes",
+            "featurette",
+            "behind the scenes",
+            "behindthescenes",
+            "deleted scenes",
+            "deletedscenes",
+            "making of",
+            "makingof",
+            "bonus",
+            "bonuses",
+            "special features",
+            "specialfeatures",
+            "sample",
+            "samples",
         ];
 
         // Read source directory
@@ -4320,9 +4592,12 @@ impl Planner {
                 // Check for subtitle folders
                 if SUBTITLE_FOLDERS.iter().any(|&f| name_lower == f) {
                     let target_path = target_folder.join(name);
-                    tracing::debug!("Adding subtitle folder move: {} -> {}", 
-                        path.display(), target_path.display());
-                    
+                    tracing::debug!(
+                        "Adding subtitle folder move: {} -> {}",
+                        path.display(),
+                        target_path.display()
+                    );
+
                     operations.push(Operation {
                         op: OperationType::Move,
                         from: Some(path),
@@ -4332,7 +4607,7 @@ impl Planner {
                     });
                     continue;
                 }
-                
+
                 // Check for extras folders (exact match or pattern match)
                 let is_extras = EXTRAS_PATTERNS.iter().any(|&p| name_lower == p)
                     || name_lower.contains(".extras")
@@ -4342,12 +4617,15 @@ impl Planner {
                     || name_lower.contains("-featurette")
                     || name_lower.contains(".sample")
                     || name_lower.contains("-sample");
-                    
+
                 if is_extras {
                     let target_path = target_folder.join(name);
-                    tracing::debug!("Adding extras folder move: {} -> {}", 
-                        path.display(), target_path.display());
-                    
+                    tracing::debug!(
+                        "Adding extras folder move: {} -> {}",
+                        path.display(),
+                        target_path.display()
+                    );
+
                     operations.push(Operation {
                         op: OperationType::Move,
                         from: Some(path),
@@ -4359,17 +4637,21 @@ impl Planner {
             }
             // Check for subtitle files and sample video files
             else if path.is_file() {
-                let ext = path.extension()
+                let ext = path
+                    .extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_lowercase())
                     .unwrap_or_default();
-                
+
                 // Check for subtitle files
                 if SUBTITLE_EXTENSIONS.iter().any(|&e| ext == e) {
                     let target_path = target_folder.join(name);
-                    tracing::debug!("Adding subtitle file move: {} -> {}", 
-                        path.display(), target_path.display());
-                    
+                    tracing::debug!(
+                        "Adding subtitle file move: {} -> {}",
+                        path.display(),
+                        target_path.display()
+                    );
+
                     operations.push(Operation {
                         op: OperationType::Move,
                         from: Some(path),
@@ -4379,18 +4661,24 @@ impl Planner {
                     });
                     continue;
                 }
-                
+
                 // Check for sample video files (files with "sample" in filename)
                 // These are preview clips that should be moved with the movie
-                let is_video = ["mkv", "mp4", "avi", "mov", "wmv", "m4v", "ts", "m2ts", "flv", "webm"]
-                    .iter().any(|&e| ext == e);
+                let is_video = [
+                    "mkv", "mp4", "avi", "mov", "wmv", "m4v", "ts", "m2ts", "flv", "webm",
+                ]
+                .iter()
+                .any(|&e| ext == e);
                 let is_sample = name_lower.contains("sample") && !name_lower.contains("sampler");
-                
+
                 if is_video && is_sample {
                     let target_path = target_folder.join(name);
-                    tracing::debug!("Adding sample video file move: {} -> {}", 
-                        path.display(), target_path.display());
-                    
+                    tracing::debug!(
+                        "Adding sample video file move: {} -> {}",
+                        path.display(),
+                        target_path.display()
+                    );
+
                     operations.push(Operation {
                         op: OperationType::Move,
                         from: Some(path),
@@ -4448,7 +4736,7 @@ pub async fn generate_plan(source: &Path, target: &Path, media_type: MediaType) 
 /// Save a plan to a JSON file.
 pub fn save_plan(plan: &Plan, path: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(plan)?;
-    
+
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -4471,10 +4759,7 @@ pub fn load_plan(path: &Path) -> Result<Plan> {
 /// Get the default plan output path.
 /// Saves to target directory if provided, otherwise to source directory.
 pub fn default_plan_path(source: &Path, target: Option<&Path>) -> PathBuf {
-    let filename = format!(
-        "plan_{}.json",
-        Utc::now().format("%Y%m%d_%H%M%S")
-    );
+    let filename = format!("plan_{}.json", Utc::now().format("%Y%m%d_%H%M%S"));
     // Prefer target directory, fallback to source
     let base_dir = target.unwrap_or(source);
     base_dir.join(filename)
@@ -4483,7 +4768,10 @@ pub fn default_plan_path(source: &Path, target: Option<&Path>) -> PathBuf {
 /// Get the sessions directory.
 pub fn sessions_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| crate::Error::other("Cannot find home directory"))?;
-    let dir = home.join(".config").join("media_organizer").join("sessions");
+    let dir = home
+        .join(".config")
+        .join("media_organizer")
+        .join("sessions");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -4491,11 +4779,11 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// Save plan to sessions directory.
 pub fn save_to_sessions(plan: &Plan) -> Result<PathBuf> {
     let session_id = format!(
-        "{}_{}", 
+        "{}_{}",
         Utc::now().format("%Y%m%d_%H%M%S"),
         &Uuid::new_v4().to_string()[..8]
     );
-    
+
     let sessions = sessions_dir()?;
     let session_dir = sessions.join(&session_id);
     fs::create_dir_all(&session_dir)?;
@@ -4514,7 +4802,7 @@ mod tests {
     #[test]
     fn test_planner_config_default() {
         let config = PlannerConfig::default();
-        assert_eq!(config.min_confidence, 0.7);  // Higher threshold: prefer skipping over wrong matches
+        assert_eq!(config.min_confidence, 0.7); // Higher threshold: prefer skipping over wrong matches
         assert!(config.download_posters);
         assert!(config.generate_nfo);
         assert_eq!(config.poster_size, "w500");
@@ -4524,13 +4812,13 @@ mod tests {
     fn test_default_plan_path() {
         let source = Path::new("/tmp/movies");
         let target = Path::new("/tmp/movies_organized");
-        
+
         // Test with target
         let path = default_plan_path(source, Some(target));
         assert!(path.to_string_lossy().contains("plan_"));
         assert!(path.to_string_lossy().ends_with(".json"));
         assert!(path.starts_with(target));
-        
+
         // Test without target (falls back to source)
         let path = default_plan_path(source, None);
         assert!(path.starts_with(source));
@@ -4538,5 +4826,3 @@ mod tests {
 
     // test_save_and_load_plan moved to tests/io_tests.rs
 }
-
-

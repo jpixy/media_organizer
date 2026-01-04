@@ -27,7 +27,10 @@ pub async fn plan_tvshows(
     target: Option<&Path>,
     output: Option<&Path>,
 ) -> Result<()> {
-    println!("{}", "[PLAN] Planning TV shows organization...".bold().cyan());
+    println!(
+        "{}",
+        "[PLAN] Planning TV shows organization...".bold().cyan()
+    );
     println!();
 
     plan_media(source, target, output, MediaType::TvShows).await
@@ -124,10 +127,7 @@ async fn plan_media(
     println!();
     println!("{}", "[Next Steps]".bold().cyan());
     println!("  1. Review the plan:");
-    println!(
-        "     {}",
-        format!("cat {}", output_path.display()).bold()
-    );
+    println!("     {}", format!("cat {}", output_path.display()).bold());
     println!("  2. Execute the plan:");
     println!(
         "     {}",
@@ -138,18 +138,18 @@ async fn plan_media(
     if !plan.unknown.is_empty() {
         println!();
         println!("{}", "[WARNING] Unknown Files:".bold().yellow());
-        
+
         // Group files by error reason
-        let mut grouped: std::collections::HashMap<String, Vec<&crate::models::plan::UnknownItem>> = 
+        let mut grouped: std::collections::HashMap<String, Vec<&crate::models::plan::UnknownItem>> =
             std::collections::HashMap::new();
         for item in &plan.unknown {
             grouped.entry(item.reason.clone()).or_default().push(item);
         }
-        
+
         // Sort groups by number of files (descending)
         let mut sorted_groups: Vec<_> = grouped.into_iter().collect();
         sorted_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-        
+
         for (reason, files) in sorted_groups {
             println!();
             println!("  {} ({} files):", reason.yellow(), files.len());
@@ -161,5 +161,3 @@ async fn plan_media(
 
     Ok(())
 }
-
-

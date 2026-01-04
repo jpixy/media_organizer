@@ -87,6 +87,3 @@ pub fn load_config() -> Config {
 
     Config::default()
 }
-
-
-

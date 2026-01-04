@@ -21,10 +21,7 @@ fn test_classify_season_directory() {
         classify_directory("Season 1"),
         DirectoryType::SeasonDirectory(1)
     );
-    assert_eq!(
-        classify_directory("S02"),
-        DirectoryType::SeasonDirectory(2)
-    );
+    assert_eq!(classify_directory("S02"), DirectoryType::SeasonDirectory(2));
 
     // Chinese patterns
     assert_eq!(
@@ -42,8 +39,14 @@ fn test_classify_quality_directory() {
     assert_eq!(classify_directory("4K"), DirectoryType::QualityDirectory);
     assert_eq!(classify_directory("1080p"), DirectoryType::QualityDirectory);
     assert_eq!(classify_directory("720p"), DirectoryType::QualityDirectory);
-    assert_eq!(classify_directory("BluRay"), DirectoryType::QualityDirectory);
-    assert_eq!(classify_directory("WEB-DL"), DirectoryType::QualityDirectory);
+    assert_eq!(
+        classify_directory("BluRay"),
+        DirectoryType::QualityDirectory
+    );
+    assert_eq!(
+        classify_directory("WEB-DL"),
+        DirectoryType::QualityDirectory
+    );
 }
 
 #[test]

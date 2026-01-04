@@ -122,7 +122,7 @@ impl FilenameParser {
     }
 
     /// Generate the prompt for parsing a filename.
-    /// 
+    ///
     /// The prompt is in Chinese to better handle Chinese filenames and leverage
     /// the AI model's understanding of Chinese media naming conventions.
     fn generate_prompt(&self, filename: &str, media_type: MediaType) -> String {
@@ -174,9 +174,12 @@ impl FilenameParser {
         println!("    [AI] Parsing: {}...", filename);
 
         let start = std::time::Instant::now();
-        
+
         // Call Ollama API with JSON format
-        let response = self.client.generate_with_format(&prompt, Some("json")).await?;
+        let response = self
+            .client
+            .generate_with_format(&prompt, Some("json"))
+            .await?;
 
         let elapsed = start.elapsed();
         println!("    [OK] Parsed in {:.1}s", elapsed.as_secs_f32());
@@ -203,7 +206,7 @@ impl FilenameParser {
                 } else {
                     raw_confidence
                 };
-                
+
                 let season = ai_response.parse_season();
                 let episode = ai_response.parse_episode();
                 Ok(ParsedFilename {
@@ -232,8 +235,10 @@ impl FilenameParser {
     fn validate_result(&self, mut parsed: ParsedFilename) -> Result<ParsedFilename> {
         // Filter out subtitle group names from titles
         parsed.title = parsed.title.and_then(|t| filter_subtitle_group(&t));
-        parsed.original_title = parsed.original_title.and_then(|t| filter_subtitle_group(&t));
-        
+        parsed.original_title = parsed
+            .original_title
+            .and_then(|t| filter_subtitle_group(&t));
+
         // Validate year range (1900 - current year + 5)
         if let Some(year) = parsed.year {
             let current_year = chrono::Utc::now().year() as u16;
@@ -282,8 +287,8 @@ impl FilenameParser {
         filenames: &[String],
         media_type: MediaType,
     ) -> Vec<(String, Result<ParsedFilename>)> {
-        use tokio::sync::Semaphore;
         use std::sync::Arc;
+        use tokio::sync::Semaphore;
 
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
         let mut handles = Vec::new();
@@ -297,40 +302,40 @@ impl FilenameParser {
             let handle = tokio::spawn(async move {
                 let result = async {
                     let response = client.generate_with_format(&prompt, Some("json")).await?;
-                    
+
                     // Parse response
-                    let parsed: Result<ParsedFilename> = match serde_json::from_str::<AiParseResponse>(&response.response) {
-                        Ok(ai_response) => {
-                            // Normalize confidence to 0.0-1.0 range
-                            let raw_confidence = ai_response.confidence.unwrap_or(0.5);
-                            let confidence = if raw_confidence > 1.0 {
-                                raw_confidence / 100.0
-                            } else {
-                                raw_confidence
-                            };
-                            
-                            let season = ai_response.parse_season();
-                            let episode = ai_response.parse_episode();
-                            Ok(ParsedFilename {
-                                original_title: ai_response.original_title,
-                                title: ai_response.title,
-                                year: ai_response.year,
-                                season,
-                                episode,
-                                confidence,
-                                raw_response: Some(response.response),
-                            })
-                        }
-                        Err(_) => {
-                            Ok(ParsedFilename {
+                    let parsed: Result<ParsedFilename> =
+                        match serde_json::from_str::<AiParseResponse>(&response.response) {
+                            Ok(ai_response) => {
+                                // Normalize confidence to 0.0-1.0 range
+                                let raw_confidence = ai_response.confidence.unwrap_or(0.5);
+                                let confidence = if raw_confidence > 1.0 {
+                                    raw_confidence / 100.0
+                                } else {
+                                    raw_confidence
+                                };
+
+                                let season = ai_response.parse_season();
+                                let episode = ai_response.parse_episode();
+                                Ok(ParsedFilename {
+                                    original_title: ai_response.original_title,
+                                    title: ai_response.title,
+                                    year: ai_response.year,
+                                    season,
+                                    episode,
+                                    confidence,
+                                    raw_response: Some(response.response),
+                                })
+                            }
+                            Err(_) => Ok(ParsedFilename {
                                 raw_response: Some(response.response),
                                 confidence: 0.0,
                                 ..Default::default()
-                            })
-                        }
-                    };
+                            }),
+                        };
                     parsed
-                }.await;
+                }
+                .await;
 
                 drop(permit);
                 (filename, result)
@@ -412,7 +417,7 @@ mod tests {
     fn test_generate_prompt_movie() {
         let parser = FilenameParser::new();
         let prompt = parser.generate_prompt("Avatar.2009.1080p.BluRay.mkv", MediaType::Movies);
-        
+
         assert!(prompt.contains("Avatar.2009.1080p.BluRay.mkv"));
         assert!(prompt.contains("电影"));
     }
@@ -421,7 +426,7 @@ mod tests {
     fn test_generate_prompt_tvshow() {
         let parser = FilenameParser::new();
         let prompt = parser.generate_prompt("Breaking.Bad.S01E01.720p.mkv", MediaType::TvShows);
-        
+
         assert!(prompt.contains("Breaking.Bad.S01E01.720p.mkv"));
         assert!(prompt.contains("电视剧"));
     }
@@ -429,7 +434,7 @@ mod tests {
     #[test]
     fn test_validate_year_range() {
         let parser = FilenameParser::new();
-        
+
         // Valid year
         let parsed = ParsedFilename {
             year: Some(2020),
@@ -439,7 +444,7 @@ mod tests {
         };
         let result = parser.validate_result(parsed).unwrap();
         assert_eq!(result.year, Some(2020));
-        
+
         // Invalid year (too old)
         let parsed = ParsedFilename {
             year: Some(1800),
@@ -454,7 +459,7 @@ mod tests {
     #[test]
     fn test_is_valid() {
         let parser = FilenameParser::new();
-        
+
         // Valid result
         let parsed = ParsedFilename {
             original_title: Some("Avatar".to_string()),
@@ -462,7 +467,7 @@ mod tests {
             ..Default::default()
         };
         assert!(parser.is_valid(&parsed));
-        
+
         // Low confidence
         let parsed = ParsedFilename {
             original_title: Some("Avatar".to_string()),
@@ -470,7 +475,7 @@ mod tests {
             ..Default::default()
         };
         assert!(!parser.is_valid(&parsed));
-        
+
         // No title
         let parsed = ParsedFilename {
             confidence: 0.8,
@@ -482,7 +487,7 @@ mod tests {
 
 /// Extract season and episode numbers from filename using regex.
 /// This avoids calling AI for each episode file.
-/// 
+///
 /// Supports patterns like:
 /// - "01.mp4", "02.mp4" (just episode number)
 /// - "S01E01.mp4", "s01e05.mkv"
@@ -500,47 +505,47 @@ pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16
         .rev()
         .collect::<Vec<_>>()
         .join(".");
-    
+
     let name_lower = name.to_lowercase();
-    
+
     // Pattern 0: S02.Special or SxxSpecial - treat as Season 0 (specials)
     // Must check BEFORE regular SxxExx pattern
     if let Some(caps) = regex_match_special(&name_lower) {
         return caps;
     }
-    
+
     // Pattern 1: S01E01, s01e05
     if let Some(caps) = regex_match_sxxexx(&name_lower) {
         return caps;
     }
-    
+
     // Pattern 2: Season 01 Episode 05
     if let Some(caps) = regex_match_season_episode(&name_lower) {
         return caps;
     }
-    
+
     // Pattern 3: E01, E05 (episode only)
     if let Some(ep) = regex_match_exx(&name_lower) {
         return (Some(1), Some(ep)); // Default to season 1
     }
-    
+
     // Pattern 4: 第01集, 第5集
     if let Some(ep) = regex_match_chinese_episode(&name) {
         return (Some(1), Some(ep)); // Default to season 1
     }
-    
+
     // Pattern 5: Just a number at the start (01, 02, 1, 2)
     // Handle "01 4K.mp4", "02.mp4", etc.
     if let Some(ep) = regex_match_leading_number(&name) {
         return (Some(1), Some(ep)); // Default to season 1
     }
-    
+
     // Pattern 6: Title-02, Title_02, Title.02, Title 02 (episode at end with separator)
     // Handle "不伦食堂-02.mp4", "今夜我用身体恋爱_02.mp4"
     if let Some(ep) = regex_match_trailing_episode(&name) {
         return (Some(1), Some(ep)); // Default to season 1
     }
-    
+
     (None, None)
 }
 
@@ -558,38 +563,49 @@ fn regex_match_special(s: &str) -> Option<(Option<u16>, Option<u16>)> {
             .and_then(|c| c.get(1))
             .and_then(|m| m.as_str().parse().ok())
             .unwrap_or(1);
-        
+
         return Some((Some(0), Some(episode))); // Season 0 for specials
     }
-    
+
     // Also match standalone "special" or "special.01"
     if s.contains("special") && !s.contains("e0") && !s.contains("e1") {
         let re = regex::Regex::new(r"(?:^|[\.\s_-])special[\.\s_-]?(\d{0,2})").ok()?;
         if let Some(caps) = re.captures(s) {
-            let episode = caps.get(1)
+            let episode = caps
+                .get(1)
                 .and_then(|m| {
                     let ep_str = m.as_str();
-                    if ep_str.is_empty() { None } else { ep_str.parse().ok() }
+                    if ep_str.is_empty() {
+                        None
+                    } else {
+                        ep_str.parse().ok()
+                    }
                 })
                 .unwrap_or(1);
             return Some((Some(0), Some(episode)));
         }
     }
-    
+
     // Match [sp] or [SP] pattern - common in fan-sub releases
     // e.g., "[EX8][2007](Galileo Season1)[sp][BDRIP]..."
-    if regex::Regex::new(r"(?i)\[sp\]").map(|re| re.is_match(s)).unwrap_or(false) {
+    if regex::Regex::new(r"(?i)\[sp\]")
+        .map(|re| re.is_match(s))
+        .unwrap_or(false)
+    {
         tracing::debug!("Detected [sp] special pattern in: {}", s);
         return Some((Some(0), Some(1))); // Season 0, Episode 1 for specials
     }
-    
+
     // Match .sp. or _sp_ or -sp- pattern
     // e.g., "Show.SP.1080p" or "Show_sp_WEB"
-    if regex::Regex::new(r"(?i)[\.\s_-]sp[\.\s_-]").map(|re| re.is_match(s)).unwrap_or(false) {
+    if regex::Regex::new(r"(?i)[\.\s_-]sp[\.\s_-]")
+        .map(|re| re.is_match(s))
+        .unwrap_or(false)
+    {
         tracing::debug!("Detected .sp. special pattern in: {}", s);
         return Some((Some(0), Some(1)));
     }
-    
+
     None
 }
 
@@ -641,7 +657,7 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
 }
 
 /// Match trailing episode number with separator.
-/// 
+///
 /// Handles formats like:
 /// - "不伦食堂-02" → episode 2
 /// - "今夜我用身体恋爱_03" → episode 3
@@ -653,7 +669,7 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
 /// - "孤芳不自赏02.1024高清" → episode 2 (CJK title + number + resolution)
 fn regex_match_trailing_episode(s: &str) -> Option<u16> {
     let trimmed = s.trim();
-    
+
     // Pattern 1: Episode number at end, optionally followed by "end/final"
     // Examples: "Show-04", "Title.05", "Show Name 10", "不伦食堂-04 end"
     let re1 = regex::Regex::new(r"[-_.\s](\d{1,3})(?:\s+(?:end|final|END|FINAL))?$").ok()?;
@@ -664,7 +680,7 @@ fn regex_match_trailing_episode(s: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern 2: Episode number followed by separator and quality/description suffix
     // Examples: "幽灵 01_超清", "Show 02_HD", "Title 03 高清"
     // This handles CJK content where quality info comes after episode number
@@ -676,11 +692,13 @@ fn regex_match_trailing_episode(s: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern 3: CJK title directly followed by episode number then dot and resolution
     // Examples: "那年青春我们正好02.1280高清未删减版", "孤芳不自赏02.1024高清"
     // Pattern: CJK char + 2-3 digit number + dot + 3-4 digit resolution
-    let re3 = regex::Regex::new(r"[\u4e00-\u9fa5](\d{2,3})\.(?:1080|720|1024|1280|480|576|2160|4K|4k)").ok()?;
+    let re3 =
+        regex::Regex::new(r"[\u4e00-\u9fa5](\d{2,3})\.(?:1080|720|1024|1280|480|576|2160|4K|4k)")
+            .ok()?;
     if let Some(caps) = re3.captures(trimmed) {
         if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
             if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
@@ -688,7 +706,7 @@ fn regex_match_trailing_episode(s: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern 4: CJK title directly followed by episode number at end
     // Examples: "[迅雷下载]那年青春我们正好02", "孤芳不自赏27"
     // Must end with CJK char + 2 digit number (to avoid matching years)
@@ -700,12 +718,12 @@ fn regex_match_trailing_episode(s: &str) -> Option<u16> {
             }
         }
     }
-    
+
     None
 }
 
 /// Check if a filename matches the organized output format.
-/// 
+///
 /// Organized formats:
 /// - TV: `[Title]-S01E01-[Episode Name]-1080p-...`
 /// - Movie: `[EnglishTitle][ChineseTitle](Year)-tt12345-tmdb67890-1080p-...`
@@ -717,45 +735,42 @@ pub fn is_organized_filename(filename: &str) -> bool {
             return true;
         }
     }
-    
+
     // Movie pattern with TMDB ID: [Title](Year)-tt...-tmdb...-
     // or [Title][Title](Year)-tt...-tmdb...-
-    let movie_pattern_with_id = regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-(?:tt\d+)?-?tmdb\d+-").ok();
+    let movie_pattern_with_id =
+        regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-(?:tt\d+)?-?tmdb\d+-").ok();
     if let Some(re) = movie_pattern_with_id {
         if re.is_match(filename) {
             return true;
         }
     }
-    
+
     // Movie pattern with technical info (no TMDB ID in filename):
     // [Title](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.ext
     // [Title][Title](Year)-Resolution-Format-Codec-BitDepth-Audio-Channels.ext
     // Examples:
     //   [Upgrade][升级](2018)-1080p-WEB-DL-h264-8bit-aac-2.0.mp4
     //   [焚城](2024)-2160p-WEB-DL-hevc-8bit-aac-2.0.mp4
-    let movie_pattern_with_tech = regex::Regex::new(
-        r"^\[.+\](?:\[.+\])?\(\d{4}\)-\d{3,4}p-"
-    ).ok();
+    let movie_pattern_with_tech = regex::Regex::new(r"^\[.+\](?:\[.+\])?\(\d{4}\)-\d{3,4}p-").ok();
     if let Some(re) = movie_pattern_with_tech {
         if re.is_match(filename) {
             return true;
         }
     }
-    
+
     false
 }
 
 /// Parse an organized TV show filename to extract metadata.
-/// 
+///
 /// Format: `[Title]-S01E01-[Episode Name]-1080p-WEB-DL-...`
 /// Returns: (title, season, episode, episode_name)
 pub fn parse_organized_tvshow_filename(filename: &str) -> Option<OrganizedTvShowInfo> {
-    let re = regex::Regex::new(
-        r"^\[([^\]]+)\]-S(\d{2})E(\d{2,3})-\[([^\]]+)\]-"
-    ).ok()?;
-    
+    let re = regex::Regex::new(r"^\[([^\]]+)\]-S(\d{2})E(\d{2,3})-\[([^\]]+)\]-").ok()?;
+
     let caps = re.captures(filename)?;
-    
+
     Some(OrganizedTvShowInfo {
         title: caps.get(1)?.as_str().to_string(),
         season: caps.get(2)?.as_str().parse().ok()?,
@@ -765,16 +780,15 @@ pub fn parse_organized_tvshow_filename(filename: &str) -> Option<OrganizedTvShow
 }
 
 /// Parse an organized movie filename to extract metadata.
-/// 
+///
 /// Format: `[EnglishTitle][ChineseTitle](Year)-tt12345-tmdb67890-1080p-...`
 /// or: `[Title](Year)-tt12345-tmdb67890-1080p-...`
 /// Returns: (original_title, title, year, imdb_id, tmdb_id)
 pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieInfo> {
     // Try two-title format with TMDB ID: [English][Chinese](Year)-ttIMDB-tmdbID-
-    let re_two_with_id = regex::Regex::new(
-        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
-    ).ok()?;
-    
+    let re_two_with_id =
+        regex::Regex::new(r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-").ok()?;
+
     if let Some(caps) = re_two_with_id.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -784,12 +798,11 @@ pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieIn
             tmdb_id: Some(caps.get(5)?.as_str().parse().ok()?),
         });
     }
-    
+
     // Single-title format with TMDB ID: [Title](Year)-ttIMDB-tmdbID-
-    let re_one_with_id = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-"
-    ).ok()?;
-    
+    let re_one_with_id =
+        regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-(?:tt(\d+))?-?tmdb(\d+)-").ok()?;
+
     if let Some(caps) = re_one_with_id.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -799,13 +812,11 @@ pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieIn
             tmdb_id: Some(caps.get(4)?.as_str().parse().ok()?),
         });
     }
-    
+
     // Two-title format with technical info (no TMDB ID): [English][Chinese](Year)-Resolution-...
     // Example: [Upgrade][升级](2018)-1080p-WEB-DL-h264-8bit-aac-2.0.mp4
-    let re_two_tech = regex::Regex::new(
-        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-"
-    ).ok()?;
-    
+    let re_two_tech = regex::Regex::new(r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-").ok()?;
+
     if let Some(caps) = re_two_tech.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -815,13 +826,11 @@ pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieIn
             tmdb_id: None, // Will be filled from parent folder
         });
     }
-    
+
     // Single-title format with technical info: [Title](Year)-Resolution-...
     // Example: [焚城](2024)-2160p-WEB-DL-hevc-8bit-aac-2.0.mp4
-    let re_one_tech = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-"
-    ).ok()?;
-    
+    let re_one_tech = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-\d{3,4}p-").ok()?;
+
     if let Some(caps) = re_one_tech.captures(filename) {
         return Some(OrganizedMovieInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -831,7 +840,7 @@ pub fn parse_organized_movie_filename(filename: &str) -> Option<OrganizedMovieIn
             tmdb_id: None, // Will be filled from parent folder
         });
     }
-    
+
     None
 }
 
@@ -906,12 +915,12 @@ impl SmartExtractedMetadata {
     pub fn has_movie_essentials(&self) -> bool {
         self.tmdb_id.is_some()
     }
-    
+
     /// Check if we have minimum required data for TV shows (at least TMDB ID)
     pub fn has_tvshow_essentials(&self) -> bool {
         self.tmdb_id.is_some()
     }
-    
+
     /// Get the primary title (first non-empty title, preferring Chinese)
     pub fn primary_title(&self) -> Option<String> {
         // If we have 2+ titles, prefer the second one (usually Chinese)
@@ -922,22 +931,28 @@ impl SmartExtractedMetadata {
             }
         }
         // Fall back to first title
-        self.titles.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        self.titles
+            .first()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
-    
+
     /// Get the original title (first title)
     pub fn original_title(&self) -> Option<String> {
-        self.titles.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        self.titles
+            .first()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 }
 
 /// Extract metadata from a string using smart pattern recognition.
-/// 
+///
 /// This function identifies elements by their unique characteristics,
 /// independent of their order in the input string.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// // All these formats will be correctly parsed:
 /// // "2024-[不讨好的勇气]-[不讨好的勇气]-tt29510241-270853"
@@ -947,7 +962,7 @@ impl SmartExtractedMetadata {
 /// ```
 pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
     let mut result = SmartExtractedMetadata::default();
-    
+
     // 1. Extract IMDB ID (most unique pattern: tt followed by 7-9 digits)
     if let Ok(re) = regex::Regex::new(r"tt(\d{7,9})") {
         if let Some(caps) = re.captures(input) {
@@ -956,7 +971,7 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     // 2. Extract TMDB ID
     // Priority 1: Explicit tmdb prefix
     if let Ok(re) = regex::Regex::new(r"tmdb(\d+)") {
@@ -966,7 +981,7 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     // Priority 2: If no tmdb prefix, look for number after IMDB ID
     if result.tmdb_id.is_none() && result.imdb_id.is_some() {
         // Pattern: -tt12345-67890 or -tt12345678-123456
@@ -982,7 +997,7 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     // 3. Extract all titles from square brackets
     if let Ok(re) = regex::Regex::new(r"\[([^\]]+)\]") {
         for caps in re.captures_iter(input) {
@@ -994,22 +1009,22 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     // 4. Extract year (4-digit number in valid range, not part of IDs)
     // First, create a version of input with IDs masked
     let mut masked = input.to_string();
-    
+
     // Mask IMDB ID
     if let Some(ref imdb) = result.imdb_id {
         masked = masked.replace(imdb, "XXXXXXXX");
     }
-    
+
     // Mask TMDB ID (both with and without prefix)
     if let Some(tmdb) = result.tmdb_id {
         masked = masked.replace(&format!("tmdb{}", tmdb), "XXXXXXXX");
         masked = masked.replace(&tmdb.to_string(), "XXXXXXXX");
     }
-    
+
     // Now find standalone year
     if let Ok(re) = regex::Regex::new(r"(?:^|[^0-9])(\d{4})(?:[^0-9]|$)") {
         for caps in re.captures_iter(&masked) {
@@ -1023,7 +1038,7 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     // Also try year in parentheses (common format)
     if result.year.is_none() {
         if let Ok(re) = regex::Regex::new(r"\((\d{4})\)") {
@@ -1038,25 +1053,24 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
             }
         }
     }
-    
+
     result
 }
 
 /// Parse an organized movie folder name to extract metadata.
-/// 
+///
 /// Supported formats:
 /// - `[Title](Year)-ttIMDB-tmdbID` - single title
 /// - `[OriginalTitle][ChineseTitle](Year)-ttIMDB-tmdbID` - dual title
-/// 
+///
 /// Examples:
 /// - `[Upgrade][升级](2018)-tt6499752-tmdb500664`
 /// - `[焚城](2024)-tt29495090-tmdb1305642`
 pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolderInfo> {
     // Pattern 1: Dual title: [Original][Chinese](Year)-ttIMDB-tmdbID
-    let re_dual = regex::Regex::new(
-        r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_dual =
+        regex::Regex::new(r"^\[([^\]]+)\]\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_dual.captures(dirname) {
         return Some(OrganizedMovieFolderInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -1066,12 +1080,10 @@ pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolde
             tmdb_id: caps.get(5)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern 2: Single title: [Title](Year)-ttIMDB-tmdbID
-    let re_single = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_single = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_single.captures(dirname) {
         return Some(OrganizedMovieFolderInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -1081,12 +1093,10 @@ pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolde
             tmdb_id: caps.get(4)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern 3: Single title without IMDB: [Title](Year)-tmdbID
-    let re_single_no_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_single_no_imdb = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_single_no_imdb.captures(dirname) {
         return Some(OrganizedMovieFolderInfo {
             original_title: Some(caps.get(1)?.as_str().to_string()),
@@ -1096,7 +1106,7 @@ pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolde
             tmdb_id: caps.get(3)?.as_str().parse().ok()?,
         });
     }
-    
+
     // ========================================================================
     // FALLBACK: Smart extraction (order-independent)
     // ========================================================================
@@ -1106,41 +1116,44 @@ pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolde
     // - "2024-[Title]-tt12345-67890"
     // - "[Title]-2024-tt12345-tmdb67890"
     // ========================================================================
-    
+
     let smart = extract_smart_metadata(dirname);
-    
+
     // Must have at least TMDB ID and year for movies
     if let (Some(tmdb_id), Some(year)) = (smart.tmdb_id, smart.year) {
         tracing::debug!(
             "[SMART] Movie folder extracted: tmdb={}, year={}, imdb={:?}, titles={:?}",
-            tmdb_id, year, smart.imdb_id, smart.titles
+            tmdb_id,
+            year,
+            smart.imdb_id,
+            smart.titles
         );
-        
+
         return Some(OrganizedMovieFolderInfo {
             original_title: smart.original_title(),
-            title: if smart.titles.len() >= 2 { 
-                smart.titles.get(1).cloned() 
-            } else { 
-                None 
+            title: if smart.titles.len() >= 2 {
+                smart.titles.get(1).cloned()
+            } else {
+                None
             },
             year,
             imdb_id: smart.imdb_id,
             tmdb_id,
         });
     }
-    
+
     None
 }
 
 /// Check if a folder name matches the organized TV show folder format.
-/// 
+///
 /// This function uses both strict pattern matching and smart extraction
 /// to detect organized folders in various formats.
-/// 
+///
 /// Supported formats (strict):
 /// - `[Title](Year)-ttIMDB-tmdbID`
 /// - `[Title](Year)-tmdbID`
-/// 
+///
 /// Also detected via smart extraction:
 /// - `Year-[Title]-tt...-tmdbID` or similar variations
 pub fn is_organized_tvshow_folder(dirname: &str) -> bool {
@@ -1151,34 +1164,37 @@ pub fn is_organized_tvshow_folder(dirname: &str) -> bool {
             return true;
         }
     }
-    
+
     // Slow path: smart extraction can identify it
     let smart = extract_smart_metadata(dirname);
     smart.has_tvshow_essentials() && !smart.titles.is_empty()
 }
 
 /// Parse an organized TV show folder name to extract metadata.
-/// 
+///
 /// Supported formats:
 /// - `[Title](Year)-ttIMDB-tmdbID` - single title with IMDB
 /// - `[Title](Year)-tmdbID` - single title without IMDB
 /// - `[OriginalTitle][ChineseTitle](Year)-ttIMDB-tmdbID` - dual title with IMDB
 /// - `[OriginalTitle][ChineseTitle]-ttIMDB-tmdbID` - dual title without year
-/// 
+///
 /// Examples:
 /// - `[罚罪2](2025)-tt36771056-tmdb296146`
 /// - `[러브 미][爱我](2025)-tt35451747-tmdb275989`
 /// - `[러브 미][ ]-tt35451747-tmdb275989` (empty Chinese title)
 pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFolderInfo> {
     // Pattern 1: Dual title with year and IMDB: [Original][Chinese](Year)-ttIMDB-tmdbID
-    let re_dual_with_year_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\[([^\]]*)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_dual_with_year_imdb =
+        regex::Regex::new(r"^\[([^\]]+)\]\[([^\]]*)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_dual_with_year_imdb.captures(dirname) {
         let original = caps.get(1)?.as_str().to_string();
         let chinese = caps.get(2)?.as_str().trim().to_string();
-        let title = if chinese.is_empty() { original.clone() } else { chinese };
+        let title = if chinese.is_empty() {
+            original.clone()
+        } else {
+            chinese
+        };
         return Some(OrganizedTvShowFolderInfo {
             title,
             year: caps.get(3)?.as_str().parse().ok(),
@@ -1186,16 +1202,19 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             tmdb_id: caps.get(5)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern 2: Dual title without year: [Original][Chinese]-ttIMDB-tmdbID
-    let re_dual_no_year = regex::Regex::new(
-        r"^\[([^\]]+)\]\[([^\]]*)\]-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_dual_no_year =
+        regex::Regex::new(r"^\[([^\]]+)\]\[([^\]]*)\]-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_dual_no_year.captures(dirname) {
         let original = caps.get(1)?.as_str().to_string();
         let chinese = caps.get(2)?.as_str().trim().to_string();
-        let title = if chinese.is_empty() { original.clone() } else { chinese };
+        let title = if chinese.is_empty() {
+            original.clone()
+        } else {
+            chinese
+        };
         return Some(OrganizedTvShowFolderInfo {
             title,
             year: None,
@@ -1203,12 +1222,10 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             tmdb_id: caps.get(4)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern 3: Single title with year and IMDB: [Title](Year)-ttIMDB-tmdbID
-    let re_with_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_with_imdb = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tt(\d+)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_with_imdb.captures(dirname) {
         return Some(OrganizedTvShowFolderInfo {
             title: caps.get(1)?.as_str().to_string(),
@@ -1217,12 +1234,10 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             tmdb_id: caps.get(4)?.as_str().parse().ok()?,
         });
     }
-    
+
     // Pattern 4: Single title without IMDB: [Title](Year)-tmdbID
-    let re_no_imdb = regex::Regex::new(
-        r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$"
-    ).ok()?;
-    
+    let re_no_imdb = regex::Regex::new(r"^\[([^\]]+)\]\((\d{4})\)-tmdb(\d+)$").ok()?;
+
     if let Some(caps) = re_no_imdb.captures(dirname) {
         return Some(OrganizedTvShowFolderInfo {
             title: caps.get(1)?.as_str().to_string(),
@@ -1231,7 +1246,7 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             tmdb_id: caps.get(3)?.as_str().parse().ok()?,
         });
     }
-    
+
     // ========================================================================
     // FALLBACK: Smart extraction (order-independent)
     // ========================================================================
@@ -1241,19 +1256,24 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
     // - "2024-[Title]-[Title]-tt12345-67890"
     // - "[Title]-2024-tt12345-tmdb67890"
     // ========================================================================
-    
+
     let smart = extract_smart_metadata(dirname);
-    
+
     // Must have at least TMDB ID for TV shows
     if let Some(tmdb_id) = smart.tmdb_id {
         // Get primary title (prefer second title if available, as it's usually Chinese)
-        let title = smart.primary_title().unwrap_or_else(|| "Unknown".to_string());
-        
+        let title = smart
+            .primary_title()
+            .unwrap_or_else(|| "Unknown".to_string());
+
         tracing::debug!(
             "[SMART] TV folder extracted: tmdb={}, year={:?}, imdb={:?}, title={}",
-            tmdb_id, smart.year, smart.imdb_id, title
+            tmdb_id,
+            smart.year,
+            smart.imdb_id,
+            title
         );
-        
+
         return Some(OrganizedTvShowFolderInfo {
             title,
             year: smart.year,
@@ -1261,7 +1281,7 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             tmdb_id,
         });
     }
-    
+
     None
 }
 
@@ -1302,21 +1322,33 @@ impl From<OrganizedMovieInfo> for ParsedFilename {
 /// - "第一部", "第二部" (treated as seasons)
 pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
     let name = dirname.trim();
-    
+
     // Chinese numeral to number mapping
     let chinese_nums = [
-        ("一", 1), ("二", 2), ("三", 3), ("四", 4), ("五", 5),
-        ("六", 6), ("七", 7), ("八", 8), ("九", 9), ("十", 10),
-        ("十一", 11), ("十二", 12), ("十三", 13), ("十四", 14), ("十五", 15),
+        ("一", 1),
+        ("二", 2),
+        ("三", 3),
+        ("四", 4),
+        ("五", 5),
+        ("六", 6),
+        ("七", 7),
+        ("八", 8),
+        ("九", 9),
+        ("十", 10),
+        ("十一", 11),
+        ("十二", 12),
+        ("十三", 13),
+        ("十四", 14),
+        ("十五", 15),
     ];
-    
+
     // Pattern 1: "第X季" or "第X部" with Chinese numerals
     for (cn, num) in &chinese_nums {
         if name.contains(&format!("第{}季", cn)) || name.contains(&format!("第{}部", cn)) {
             return Some(*num);
         }
     }
-    
+
     // Pattern 2: "第N季" with Arabic numerals
     if let Ok(re) = regex::Regex::new(r"第(\d{1,2})季") {
         if let Some(caps) = re.captures(name) {
@@ -1325,7 +1357,7 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern 3: "Season N", "Season 0N"
     if let Ok(re) = regex::Regex::new(r"(?i)season\s*(\d{1,2})") {
         if let Some(caps) = re.captures(name) {
@@ -1334,7 +1366,7 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Pattern 4: "S01", "S1" at end or with space
     if let Ok(re) = regex::Regex::new(r"(?i)(?:^|[\s\-_])s(\d{1,2})(?:$|[\s\-_])") {
         if let Some(caps) = re.captures(name) {
@@ -1343,15 +1375,15 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
             }
         }
     }
-    
+
     None
 }
 
 /// Filter out subtitle group names from title.
-/// 
+///
 /// Returns None if the entire title is a subtitle group name,
 /// otherwise returns the cleaned title (if different) or the original.
-/// 
+///
 /// Common subtitle groups:
 /// - Chinese: 霸王龙压制组, 字幕侠, FIX字幕侠, 人人影视, 追新番, 擦枪字幕组
 /// - English: T-Rex, YYeTs, rarbg, DEFLATE, ZeroTV, NF, AMZN
@@ -1360,20 +1392,41 @@ fn filter_subtitle_group(title: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    
+
     // Common subtitle group patterns (case-insensitive for English)
     let subtitle_groups_exact = [
         // Chinese subtitle groups (exact match)
-        "霸王龙压制组", "霸王龙压制组T-Rex", "霸王龙", "T-Rex",
-        "字幕侠", "FIX字幕侠", "人人影视", "YYeTs", "追新番", "ZhuixinFan",
-        "擦枪字幕组", "CMCT", "官方中字", "中英双字", "中字",
+        "霸王龙压制组",
+        "霸王龙压制组T-Rex",
+        "霸王龙",
+        "T-Rex",
+        "字幕侠",
+        "FIX字幕侠",
+        "人人影视",
+        "YYeTs",
+        "追新番",
+        "ZhuixinFan",
+        "擦枪字幕组",
+        "CMCT",
+        "官方中字",
+        "中英双字",
+        "中字",
         // Common release groups (exact match)
-        "rarbg", "DEFLATE", "ZeroTV", "NF", "AMZN", "HMAX",
-        "DnO", "Coo7", "EX8", "huanyuezmz", "TheTaoSong",
+        "rarbg",
+        "DEFLATE",
+        "ZeroTV",
+        "NF",
+        "AMZN",
+        "HMAX",
+        "DnO",
+        "Coo7",
+        "EX8",
+        "huanyuezmz",
+        "TheTaoSong",
     ];
-    
+
     let lower = trimmed.to_lowercase();
-    
+
     // Check for exact match with subtitle group
     for group in &subtitle_groups_exact {
         if lower == group.to_lowercase() {
@@ -1381,13 +1434,18 @@ fn filter_subtitle_group(title: &str) -> Option<String> {
             return None;
         }
     }
-    
+
     // Check if title contains mostly subtitle group patterns
     let contains_patterns = [
-        "压制组", "字幕组", "字幕侠", "人人影视", 
-        "rarbg", "deflate", "zerotv",
+        "压制组",
+        "字幕组",
+        "字幕侠",
+        "人人影视",
+        "rarbg",
+        "deflate",
+        "zerotv",
     ];
-    
+
     for pattern in &contains_patterns {
         if lower.contains(&pattern.to_lowercase()) {
             // If the title is primarily a subtitle group reference
@@ -1397,6 +1455,6 @@ fn filter_subtitle_group(title: &str) -> Option<String> {
             }
         }
     }
-    
+
     Some(trimmed.to_string())
 }

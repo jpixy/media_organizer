@@ -26,21 +26,19 @@ async fn main() -> anyhow::Result<()> {
             }
 
             match media_type {
-                PlanType::Movies { source, target, output } => {
-                    plan::plan_movies(
-                        &source,
-                        target.as_deref(),
-                        output.as_deref(),
-                    )
-                    .await?;
+                PlanType::Movies {
+                    source,
+                    target,
+                    output,
+                } => {
+                    plan::plan_movies(&source, target.as_deref(), output.as_deref()).await?;
                 }
-                PlanType::Tvshows { source, target, output } => {
-                    plan::plan_tvshows(
-                        &source,
-                        target.as_deref(),
-                        output.as_deref(),
-                    )
-                    .await?;
+                PlanType::Tvshows {
+                    source,
+                    target,
+                    output,
+                } => {
+                    plan::plan_tvshows(&source, target.as_deref(), output.as_deref()).await?;
                 }
             }
         }
@@ -49,20 +47,21 @@ async fn main() -> anyhow::Result<()> {
             execute::execute_plan(&plan_file, output.as_deref()).await?;
         }
 
-        Commands::Rollback { rollback_file, dry_run } => {
+        Commands::Rollback {
+            rollback_file,
+            dry_run,
+        } => {
             rollback::rollback(&rollback_file, dry_run).await?;
         }
 
-        Commands::Sessions { action } => {
-            match action {
-                SessionsAction::List => {
-                    sessions::list_sessions().await?;
-                }
-                SessionsAction::Show { session_id } => {
-                    sessions::show_session(&session_id).await?;
-                }
+        Commands::Sessions { action } => match action {
+            SessionsAction::List => {
+                sessions::list_sessions().await?;
             }
-        }
+            SessionsAction::Show { session_id } => {
+                sessions::show_session(&session_id).await?;
+            }
+        },
 
         Commands::Verify { path } => {
             verify::verify(&path).await?;

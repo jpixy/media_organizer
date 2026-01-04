@@ -91,4 +91,3 @@ fn test_scan_nested_directories() {
 
     assert_eq!(result.videos.len(), 1);
 }
-

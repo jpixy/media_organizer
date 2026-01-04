@@ -1,6 +1,6 @@
 //! Filename generator.
 
-use crate::models::media::{MovieMetadata, TvShowMetadata, VideoMetadata, EpisodeMetadata};
+use crate::models::media::{EpisodeMetadata, MovieMetadata, TvShowMetadata, VideoMetadata};
 
 /// Generate movie filename.
 ///
@@ -135,6 +135,3 @@ mod tests {
         assert!(filename.ends_with(".mkv"));
     }
 }
-
-
-

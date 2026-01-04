@@ -50,6 +50,3 @@ mod tests {
         assert!(!titles_equivalent("Avatar", "Titanic"));
     }
 }
-
-
-

@@ -19,8 +19,7 @@ impl TmdbConfig {
     /// Create config from environment variable.
     /// Supports both API key (v3) and Bearer token (v4) formats.
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("TMDB_API_KEY")
-            .map_err(|_| crate::Error::TmdbApiKeyMissing)?;
+        let api_key = std::env::var("TMDB_API_KEY").map_err(|_| crate::Error::TmdbApiKeyMissing)?;
 
         // Bearer tokens start with "eyJ" (base64 encoded JWT header)
         let use_bearer = api_key.starts_with("eyJ");
@@ -367,19 +366,12 @@ impl TmdbClient {
         if self.config.use_bearer {
             format!(
                 "{}/{}?language={}{}",
-                TMDB_BASE_URL,
-                path,
-                self.config.language,
-                extra_params
+                TMDB_BASE_URL, path, self.config.language, extra_params
             )
         } else {
             format!(
                 "{}/{}?api_key={}&language={}{}",
-                TMDB_BASE_URL,
-                path,
-                self.config.api_key,
-                self.config.language,
-                extra_params
+                TMDB_BASE_URL, path, self.config.api_key, self.config.language, extra_params
             )
         }
     }
@@ -402,11 +394,15 @@ impl TmdbClient {
     }
 
     /// Search for movies.
-    pub async fn search_movie(&self, query: &str, year: Option<u16>) -> Result<Vec<MovieSearchItem>> {
+    pub async fn search_movie(
+        &self,
+        query: &str,
+        year: Option<u16>,
+    ) -> Result<Vec<MovieSearchItem>> {
         let year_param = year.map(|y| format!("&year={}", y)).unwrap_or_default();
         let url = self.build_url(
             "search/movie",
-            &format!("&query={}{}", urlencoding::encode(query), year_param)
+            &format!("&query={}{}", urlencoding::encode(query), year_param),
         );
 
         let resp: MovieSearchResult = self.build_request(&url).send().await?.json().await?;
@@ -417,73 +413,66 @@ impl TmdbClient {
     pub async fn get_movie_details(&self, movie_id: u64) -> Result<MovieDetails> {
         let url = self.build_url(
             &format!("movie/{}", movie_id),
-            "&append_to_response=credits,release_dates"
+            "&append_to_response=credits,release_dates",
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
     }
 
     /// Get collection details (all movies in a franchise).
-    /// 
+    ///
     /// Returns the full collection info including the list of all movies (parts).
     pub async fn get_collection_details(&self, collection_id: u64) -> Result<CollectionDetails> {
-        let url = self.build_url(
-            &format!("collection/{}", collection_id),
-            ""
-        );
+        let url = self.build_url(&format!("collection/{}", collection_id), "");
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
     }
 
     /// Find movie by IMDB ID using TMDB's find API.
-    /// 
+    ///
     /// This is useful when the filename contains an IMDB ID (e.g., tt2962872)
     /// but the title search fails to find a match.
-    /// 
+    ///
     /// Returns the TMDB movie ID if found, None otherwise.
     pub async fn find_movie_by_imdb_id(&self, imdb_id: &str) -> Result<Option<u64>> {
-        let url = self.build_url(
-            &format!("find/{}", imdb_id),
-            "&external_source=imdb_id"
-        );
+        let url = self.build_url(&format!("find/{}", imdb_id), "&external_source=imdb_id");
 
         let resp = self.build_request(&url).send().await?;
-        
+
         if !resp.status().is_success() {
             return Ok(None);
         }
 
         let result: FindByExternalIdResult = resp.json().await?;
-        
+
         // Return the first movie result's ID if any
         Ok(result.movie_results.first().map(|m| m.id))
     }
 
     /// Find TV show by IMDB ID using TMDB's find API.
     pub async fn find_tv_by_imdb_id(&self, imdb_id: &str) -> Result<Option<u64>> {
-        let url = self.build_url(
-            &format!("find/{}", imdb_id),
-            "&external_source=imdb_id"
-        );
+        let url = self.build_url(&format!("find/{}", imdb_id), "&external_source=imdb_id");
 
         let resp = self.build_request(&url).send().await?;
-        
+
         if !resp.status().is_success() {
             return Ok(None);
         }
 
         let result: FindByExternalIdResult = resp.json().await?;
-        
+
         // Return the first TV result's ID if any
         Ok(result.tv_results.first().map(|t| t.id))
     }
 
     /// Search for TV shows.
     pub async fn search_tv(&self, query: &str, year: Option<u16>) -> Result<Vec<TvSearchItem>> {
-        let year_param = year.map(|y| format!("&first_air_date_year={}", y)).unwrap_or_default();
+        let year_param = year
+            .map(|y| format!("&first_air_date_year={}", y))
+            .unwrap_or_default();
         let url = self.build_url(
             "search/tv",
-            &format!("&query={}{}", urlencoding::encode(query), year_param)
+            &format!("&query={}{}", urlencoding::encode(query), year_param),
         );
 
         let resp: TvSearchResult = self.build_request(&url).send().await?.json().await?;
@@ -494,14 +483,18 @@ impl TmdbClient {
     pub async fn get_tv_details(&self, tv_id: u64) -> Result<TvDetails> {
         let url = self.build_url(
             &format!("tv/{}", tv_id),
-            "&append_to_response=external_ids,credits"
+            "&append_to_response=external_ids,credits",
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
     }
 
     /// Get season details.
-    pub async fn get_season_details(&self, tv_id: u64, season_number: u16) -> Result<SeasonDetails> {
+    pub async fn get_season_details(
+        &self,
+        tv_id: u64,
+        season_number: u16,
+    ) -> Result<SeasonDetails> {
         let url = self.build_url(&format!("tv/{}/season/{}", tv_id, season_number), "");
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
@@ -515,8 +508,11 @@ impl TmdbClient {
         episode_number: u16,
     ) -> Result<EpisodeDetails> {
         let url = self.build_url(
-            &format!("tv/{}/season/{}/episode/{}", tv_id, season_number, episode_number),
-            ""
+            &format!(
+                "tv/{}/season/{}/episode/{}",
+                tv_id, season_number, episode_number
+            ),
+            "",
         );
         let resp = self.build_request(&url).send().await?.json().await?;
         Ok(resp)
@@ -542,5 +538,3 @@ impl TmdbClient {
         Ok(bytes.to_vec())
     }
 }
-
-

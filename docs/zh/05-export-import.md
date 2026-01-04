@@ -272,3 +272,4 @@ media-organizer import sync.zip --merge
 | 部分导入失败 | 继续导入其他内容，显示错误摘要 |
 | 导入文件损坏 | 验证 ZIP 完整性，提示错误 |
 
+

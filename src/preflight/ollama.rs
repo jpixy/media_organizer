@@ -29,13 +29,8 @@ pub async fn check() -> CheckResult {
                 Err(_) => CheckResult::ok("Ollama", "running"),
             }
         }
-        Ok(false) | Err(_) => CheckResult::fail(
-            "Ollama",
-            "not running",
-            "Start Ollama: ollama serve",
-        ),
+        Ok(false) | Err(_) => {
+            CheckResult::fail("Ollama", "not running", "Start Ollama: ollama serve")
+        }
     }
 }
-
-
-

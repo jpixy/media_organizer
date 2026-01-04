@@ -15,7 +15,9 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
 
     // Validate rollback file exists
     if !rollback_file.exists() {
-        return Err(crate::Error::PathNotFound(rollback_file.display().to_string()));
+        return Err(crate::Error::PathNotFound(
+            rollback_file.display().to_string(),
+        ));
     }
 
     // Load rollback
@@ -29,10 +31,18 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
     println!();
 
     if dry_run {
-        println!("{}", "[DRY-RUN] Showing what would be done:".bold().yellow());
+        println!(
+            "{}",
+            "[DRY-RUN] Showing what would be done:".bold().yellow()
+        );
         println!();
     } else {
-        println!("{}", "[WARNING] This will reverse all previous operations!".bold().yellow());
+        println!(
+            "{}",
+            "[WARNING] This will reverse all previous operations!"
+                .bold()
+                .yellow()
+        );
         println!();
     }
 
@@ -75,5 +85,3 @@ pub async fn rollback(rollback_file: &Path, dry_run: bool) -> Result<()> {
 
     Ok(())
 }
-
-

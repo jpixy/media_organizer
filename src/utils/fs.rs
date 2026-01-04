@@ -76,6 +76,3 @@ mod tests {
         assert!(!is_sample(&PathBuf::from("/path/video.mkv")));
     }
 }
-
-
-

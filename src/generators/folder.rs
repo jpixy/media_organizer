@@ -136,6 +136,3 @@ mod tests {
         assert_eq!(folder.matches("[霸王别姬]").count(), 1);
     }
 }
-
-
-

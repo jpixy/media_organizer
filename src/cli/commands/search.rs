@@ -178,17 +178,18 @@ fn print_table(results: &indexer::SearchResults, show_status: bool) {
     }
 
     let total = results.movies.len() + results.tvshows.len();
-    println!(
-        "{}",
-        format!("Found {} results:", total).bold().cyan()
-    );
+    println!("{}", format!("Found {} results:", total).bold().cyan());
     println!();
 
     if !results.movies.is_empty() {
         println!("{}", format!("Movies ({}):", results.movies.len()).bold());
         println!(
             " {:>4} | {:>4} | {:<40} | {:<12} | {}",
-            "#", "Year", "Title", "Disk", if show_status { "Status" } else { "Country" }
+            "#",
+            "Year",
+            "Title",
+            "Disk",
+            if show_status { "Status" } else { "Country" }
         );
         println!("{}", "-".repeat(80));
 
@@ -228,7 +229,11 @@ fn print_table(results: &indexer::SearchResults, show_status: bool) {
         );
         println!(
             " {:>4} | {:>4} | {:<40} | {:<12} | {}",
-            "#", "Year", "Title", "Disk", if show_status { "Status" } else { "Episodes" }
+            "#",
+            "Year",
+            "Title",
+            "Disk",
+            if show_status { "Status" } else { "Episodes" }
         );
         println!("{}", "-".repeat(80));
 
@@ -285,4 +290,3 @@ fn print_table(results: &indexer::SearchResults, show_status: bool) {
         }
     }
 }
-

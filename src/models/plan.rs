@@ -1,6 +1,8 @@
 //! Plan data model.
 
-use super::media::{MediaType, MovieMetadata, TvShowMetadata, EpisodeMetadata, VideoFile, VideoMetadata};
+use super::media::{
+    EpisodeMetadata, MediaType, MovieMetadata, TvShowMetadata, VideoFile, VideoMetadata,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -139,6 +141,3 @@ pub struct UnknownItem {
     /// Reason for failure.
     pub reason: String,
 }
-
-
-

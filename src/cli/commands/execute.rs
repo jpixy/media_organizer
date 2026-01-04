@@ -25,15 +25,23 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
     let plan = planner::load_plan(plan_file)?;
 
     // Print plan info
-    println!("  {} {}", "Media type:".bold(), 
-        plan.media_type.map(|t| t.to_string()).unwrap_or_else(|| "unknown".to_string()));
+    println!(
+        "  {} {}",
+        "Media type:".bold(),
+        plan.media_type
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    );
     println!("  {} {}", "Source:".bold(), plan.source_path.display());
     println!("  {} {}", "Target:".bold(), plan.target_path.display());
     println!("  {} {}", "Items:".bold(), plan.items.len());
     println!();
 
     // Confirm execution
-    println!("{}", "[WARNING] This will move and modify files!".bold().yellow());
+    println!(
+        "{}",
+        "[WARNING] This will move and modify files!".bold().yellow()
+    );
     println!();
 
     // Execute plan
@@ -45,11 +53,9 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
         Some(p) => p.to_path_buf(),
         None => {
             // Default: same directory as plan file with rollback prefix
-            let filename = format!(
-                "rollback_{}.json",
-                Utc::now().format("%Y%m%d_%H%M%S")
-            );
-            plan_file.parent()
+            let filename = format!("rollback_{}.json", Utc::now().format("%Y%m%d_%H%M%S"));
+            plan_file
+                .parent()
                 .map(|p| p.join(filename.clone()))
                 .unwrap_or_else(|| PathBuf::from(filename))
         }
@@ -76,5 +82,3 @@ pub async fn execute_plan(plan_file: &Path, output: Option<&Path>) -> Result<()>
 
     Ok(())
 }
-
-

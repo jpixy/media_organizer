@@ -296,6 +296,3 @@ pub enum SessionsAction {
         session_id: String,
     },
 }
-
-
-

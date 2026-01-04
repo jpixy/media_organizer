@@ -12,13 +12,10 @@ use walkdir::WalkDir;
 /// Supported video file extensions.
 const VIDEO_EXTENSIONS: &[&str] = &[
     // Common formats
-    "mkv", "mp4", "avi", "mov", "wmv",
-    // Additional formats
-    "m4v", "ts", "m2ts", "flv", "webm",
-    // Less common but supported
-    "mpg", "mpeg", "vob", "ogv", "ogm",
-    "divx", "xvid", "3gp", "3g2", "mts",
-    "rm", "rmvb", "asf", "f4v",
+    "mkv", "mp4", "avi", "mov", "wmv", // Additional formats
+    "m4v", "ts", "m2ts", "flv", "webm", // Less common but supported
+    "mpg", "mpeg", "vob", "ogv", "ogm", "divx", "xvid", "3gp", "3g2", "mts", "rm", "rmvb", "asf",
+    "f4v",
 ];
 
 /// Result of scanning a directory.
@@ -50,10 +47,10 @@ fn is_video_extension(ext: &str) -> bool {
 }
 
 /// Check if a file is inside an "Extras" directory.
-/// 
+///
 /// Extras directories contain behind-the-scenes content, deleted scenes, etc.
 /// These should not be processed as main movies.
-/// 
+///
 /// Patterns matched (case-insensitive):
 /// - "Extras", "Extra"
 /// - "Featurettes", "Featurette"
@@ -69,45 +66,52 @@ fn is_in_extras_directory(path: &Path) -> bool {
     for component in path.components() {
         if let std::path::Component::Normal(name) = component {
             let name_str = name.to_string_lossy().to_lowercase();
-            
+
             // Exact matches (case-insensitive)
             let extras_names = [
-                "extras", "extra",
-                "featurettes", "featurette", 
-                "behind the scenes", "behindthescenes",
-                "deleted scenes", "deletedscenes",
-                "making of", "makingof",
-                "bonus", "bonuses",
-                "special features", "specialfeatures",
-                "sample", "samples",
+                "extras",
+                "extra",
+                "featurettes",
+                "featurette",
+                "behind the scenes",
+                "behindthescenes",
+                "deleted scenes",
+                "deletedscenes",
+                "making of",
+                "makingof",
+                "bonus",
+                "bonuses",
+                "special features",
+                "specialfeatures",
+                "sample",
+                "samples",
             ];
-            
+
             if extras_names.iter().any(|&n| name_str == n) {
                 return true;
             }
-            
+
             // Pattern: ends with ".extras" or "-extras" or "_extras"
             // e.g., "The.Bourne.Identity.Extras-Grym"
-            if name_str.contains(".extras") || 
-               name_str.contains("-extras") || 
-               name_str.contains("_extras") {
+            if name_str.contains(".extras")
+                || name_str.contains("-extras")
+                || name_str.contains("_extras")
+            {
                 return true;
             }
-            
+
             // Pattern: ends with ".featurettes" or similar
-            if name_str.contains(".featurette") || 
-               name_str.contains("-featurette") {
+            if name_str.contains(".featurette") || name_str.contains("-featurette") {
                 return true;
             }
-            
+
             // Pattern: ends with ".sample" or "-sample"
-            if name_str.contains(".sample") || 
-               name_str.contains("-sample") {
+            if name_str.contains(".sample") || name_str.contains("-sample") {
                 return true;
             }
         }
     }
-    
+
     false
 }
 
@@ -201,11 +205,14 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
             all_dirs.insert(entry_path.to_path_buf());
         } else if entry.file_type().is_file() {
             result.total_files_scanned += 1;
-            
+
             // Skip files in "Extras" directories - they will be moved as-is with the movie
             // (handled separately in add_extras_operations, similar to subtitles)
             if is_in_extras_directory(entry_path) {
-                tracing::debug!("Extras file (will be moved with movie): {}", entry_path.display());
+                tracing::debug!(
+                    "Extras file (will be moved with movie): {}",
+                    entry_path.display()
+                );
                 continue;
             }
 
@@ -213,17 +220,21 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
             if let Some(ext) = entry_path.extension() {
                 if is_video_extension(&ext.to_string_lossy()) {
                     // Get filename for sample check
-                    let filename = entry_path.file_name()
+                    let filename = entry_path
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("");
-                    
+
                     // Skip sample files - they will be moved as-is with the movie
                     // (handled separately in add_subtitle_operations)
                     if is_sample_filename(filename) {
-                        tracing::debug!("Sample file (will be moved with movie): {}", entry_path.display());
+                        tracing::debug!(
+                            "Sample file (will be moved with movie): {}",
+                            entry_path.display()
+                        );
                         continue;
                     }
-                    
+
                     match create_video_file(entry_path) {
                         Ok(video_file) => {
                             // Mark parent directory as having files
@@ -249,7 +260,7 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
         if dir == path {
             continue;
         }
-        
+
         // Check if this directory or any subdirectory has video files
         let has_videos = dirs_with_files.iter().any(|d| d.starts_with(&dir));
         if !has_videos {
@@ -314,5 +325,3 @@ mod tests {
 
     // Integration tests for scan_directory() moved to tests/scanner_tests.rs
 }
-
-
