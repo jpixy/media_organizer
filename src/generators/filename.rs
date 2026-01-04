@@ -2,6 +2,18 @@
 
 use crate::models::media::{EpisodeMetadata, MovieMetadata, TvShowMetadata, VideoMetadata};
 
+/// Format resolution string with actual dimensions.
+///
+/// If width and height are available, returns format like "1920x1080(1080p)".
+/// Otherwise, returns just the resolution category like "1080p".
+fn format_resolution(video: &VideoMetadata) -> String {
+    if video.width > 0 && video.height > 0 {
+        format!("{}x{}({})", video.width, video.height, video.resolution)
+    } else {
+        video.resolution.clone()
+    }
+}
+
 /// Extract disc/part identifier from filename.
 ///
 /// Detects patterns like: cd1, cd2, disc1, disc2, part1, part2, dvd1, dvd2, etc.
@@ -95,8 +107,8 @@ pub fn generate_movie_filename_with_disc(
     // Add year
     parts.push(format!("({})", movie.year));
 
-    // Add video info
-    parts.push(format!("-{}", video.resolution));
+    // Add video info with actual resolution
+    parts.push(format!("-{}", format_resolution(video)));
     parts.push(format!("-{}", video.format));
     parts.push(format!("-{}", video.video_codec));
     parts.push(format!("-{}bit", video.bit_depth));
@@ -146,8 +158,8 @@ pub fn generate_episode_filename(
     }
     parts.push(format!("-[{}]", sanitize_filename(&episode.name)));
 
-    // Video info (including resolution)
-    parts.push(format!("-{}", video.resolution));
+    // Video info with actual resolution
+    parts.push(format!("-{}", format_resolution(video)));
     parts.push(format!("-{}", video.format));
     parts.push(format!("-{}", video.video_codec));
     parts.push(format!("-{}bit", video.bit_depth));
@@ -187,6 +199,8 @@ mod tests {
         };
 
         let video = VideoMetadata {
+            width: 3840,
+            height: 2160,
             resolution: "2160p".to_string(),
             format: "BluRay".to_string(),
             video_codec: "x265".to_string(),
@@ -198,7 +212,7 @@ mod tests {
         let filename = generate_movie_filename(&movie, &video, None, "mkv");
         assert!(filename.contains("[Avatar]"));
         assert!(filename.contains("[阿凡达]"));
-        assert!(filename.contains("2160p"));
+        assert!(filename.contains("3840x2160(2160p)"));
         assert!(filename.contains("10bit"));
         assert!(filename.ends_with(".mkv"));
     }
@@ -255,7 +269,9 @@ mod tests {
         };
 
         let video = VideoMetadata {
-            resolution: "480p".to_string(),
+            width: 672,
+            height: 288,
+            resolution: "288p".to_string(),
             format: "DVDRip".to_string(),
             video_codec: "xvid".to_string(),
             bit_depth: 8,

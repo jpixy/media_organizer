@@ -83,13 +83,20 @@ pub fn extract_metadata(path: &Path) -> Result<VideoMetadata> {
     // Find audio stream
     let audio_stream = ffprobe.streams.iter().find(|s| s.codec_type == "audio");
 
-    // Extract resolution
-    let resolution = video_stream
+    // Extract width and height
+    let (width, height) = video_stream
         .and_then(|s| match (s.width, s.height) {
-            (Some(w), Some(h)) => Some(resolution_to_string(w, h)),
+            (Some(w), Some(h)) => Some((w, h)),
             _ => None,
         })
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or((0, 0));
+
+    // Extract resolution category
+    let resolution = if width > 0 && height > 0 {
+        resolution_to_string(width, height)
+    } else {
+        "unknown".to_string()
+    };
 
     // Extract video codec
     let video_codec = video_stream
@@ -117,6 +124,8 @@ pub fn extract_metadata(path: &Path) -> Result<VideoMetadata> {
     let format = detect_format(&ffprobe.format.format_name, path);
 
     Ok(VideoMetadata {
+        width,
+        height,
         resolution,
         format,
         video_codec,
@@ -180,6 +189,8 @@ pub fn parse_metadata_from_filename(filename: &str) -> VideoMetadata {
     let filename_lower = filename.to_lowercase();
 
     VideoMetadata {
+        width: 0,  // Cannot determine from filename
+        height: 0, // Cannot determine from filename
         resolution: parse_resolution_from_filename(&filename_lower),
         format: parse_format_from_filename(&filename_lower),
         video_codec: parse_video_codec_from_filename(&filename_lower),
@@ -363,6 +374,16 @@ fn parse_audio_channels_from_filename(filename: &str) -> String {
 /// Merge two VideoMetadata, preferring values from primary, falling back to secondary.
 pub fn merge_metadata(primary: VideoMetadata, secondary: VideoMetadata) -> VideoMetadata {
     VideoMetadata {
+        width: if primary.width > 0 {
+            primary.width
+        } else {
+            secondary.width
+        },
+        height: if primary.height > 0 {
+            primary.height
+        } else {
+            secondary.height
+        },
         resolution: if primary.resolution != "unknown" {
             primary.resolution
         } else {

@@ -51,7 +51,11 @@ pub struct VideoFile {
 /// Video metadata extracted from ffprobe.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VideoMetadata {
-    /// Resolution (e.g., "2160p", "1080p").
+    /// Video width in pixels.
+    pub width: u32,
+    /// Video height in pixels.
+    pub height: u32,
+    /// Resolution category (e.g., "2160p", "1080p").
     pub resolution: String,
     /// Video format (e.g., "BluRay", "WEB-DL").
     pub format: String,
