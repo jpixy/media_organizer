@@ -132,16 +132,28 @@ async fn plan_media(
         format!("media-organizer execute {}", output_path.display()).cyan()
     );
 
-    // Warn about unknown files
+    // Warn about unknown files - group by error reason
     if !plan.unknown.is_empty() {
         println!();
         println!("{}", "[WARNING] Unknown Files:".bold().yellow());
+        
+        // Group files by error reason
+        let mut grouped: std::collections::HashMap<String, Vec<&crate::models::plan::UnknownItem>> = 
+            std::collections::HashMap::new();
         for item in &plan.unknown {
-            println!(
-                "  {} - {}",
-                item.source.filename.red(),
-                item.reason
-            );
+            grouped.entry(item.reason.clone()).or_default().push(item);
+        }
+        
+        // Sort groups by number of files (descending)
+        let mut sorted_groups: Vec<_> = grouped.into_iter().collect();
+        sorted_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        
+        for (reason, files) in sorted_groups {
+            println!();
+            println!("  {} ({} files):", reason.yellow(), files.len());
+            for item in files {
+                println!("    {}", item.source.path.display().to_string().red());
+            }
         }
     }
 
