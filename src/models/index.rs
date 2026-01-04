@@ -43,6 +43,9 @@ impl Default for CentralIndex {
 }
 
 /// Information about an indexed disk.
+/// 
+/// Supports composite storage: one disk label can have multiple media types
+/// (movies and tvshows) with different paths.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskInfo {
     /// Disk label (user-friendly name)
@@ -57,8 +60,13 @@ pub struct DiskInfo {
     pub tvshow_count: usize,
     /// Total size in bytes
     pub total_size_bytes: u64,
-    /// Base path when indexed
+    /// Base path when indexed (legacy, for backward compatibility)
+    #[serde(default)]
     pub base_path: String,
+    /// Paths by media type: {"movies": "/path/Movies", "tvshows": "/path/TVShows"}
+    /// Extensible for future media types (e.g., "music", "audiobooks")
+    #[serde(default)]
+    pub paths: HashMap<String, String>,
 }
 
 /// A movie entry in the index.
@@ -240,6 +248,7 @@ impl Default for DiskIndex {
                 tvshow_count: 0,
                 total_size_bytes: 0,
                 base_path: String::new(),
+                paths: HashMap::new(),
             },
             movies: Vec::new(),
             tvshows: Vec::new(),

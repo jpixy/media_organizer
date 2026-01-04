@@ -146,6 +146,20 @@ async fn show_stats() -> Result<()> {
             disk.total_size_bytes as f64 / 1_073_741_824.0,
             status
         );
+        // Show paths if multiple media types are stored
+        if disk.paths.len() > 1 {
+            for (media_type, path) in &disk.paths {
+                println!("      {} -> {}", media_type, path.dimmed());
+            }
+        } else if !disk.paths.is_empty() {
+            // Single path: show inline
+            if let Some((media_type, path)) = disk.paths.iter().next() {
+                println!("      {} -> {}", media_type, path.dimmed());
+            }
+        } else if !disk.base_path.is_empty() {
+            // Legacy fallback
+            println!("      path: {}", disk.base_path.dimmed());
+        }
     }
     println!("{}", "-".repeat(50));
     println!(

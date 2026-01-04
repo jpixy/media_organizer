@@ -186,9 +186,15 @@ pub fn scan_directory(
     
     let mut index = DiskIndex::default();
     index.disk.label = disk_label.to_string();
-    index.disk.uuid = disk_uuid;
+    index.disk.uuid = disk_uuid.clone();
     index.disk.base_path = path.to_string_lossy().to_string();
     index.disk.last_indexed = chrono::Utc::now().to_rfc3339();
+    
+    // Store path by media type for composite storage support
+    index.disk.paths.insert(
+        media_type.to_string(),
+        path.to_string_lossy().to_string()
+    );
     
     let nfo_pattern = if media_type == "movies" {
         "movie.nfo"
@@ -554,17 +560,63 @@ fn country_name_to_code(name: &str) -> String {
 }
 
 /// Merge disk index into central index.
+/// 
+/// Supports composite storage: if a disk already exists in the central index,
+/// the new scan is merged by media type instead of completely replacing it.
+/// This allows one disk label to have both movies and tvshows with different paths.
 pub fn merge_disk_into_central(central: &mut CentralIndex, disk: DiskIndex) {
-    // Update or add disk info
-    central.disks.insert(disk.disk.label.clone(), disk.disk.clone());
+    let label = disk.disk.label.clone();
     
-    // Remove old entries for this disk
-    central.movies.retain(|m| m.disk != disk.disk.label);
-    central.tvshows.retain(|t| t.disk != disk.disk.label);
+    // Determine what media types are being added in this scan
+    let has_movies = !disk.movies.is_empty();
+    let has_tvshows = !disk.tvshows.is_empty();
     
-    // Add new entries
-    central.movies.extend(disk.movies);
-    central.tvshows.extend(disk.tvshows);
+    // Update or merge disk info
+    if let Some(existing_disk) = central.disks.get_mut(&label) {
+        // Merge: keep existing paths, add new ones
+        for (media_type, path) in &disk.disk.paths {
+            existing_disk.paths.insert(media_type.clone(), path.clone());
+        }
+        // Update timestamp
+        existing_disk.last_indexed = disk.disk.last_indexed.clone();
+        // Update UUID if provided
+        if disk.disk.uuid.is_some() {
+            existing_disk.uuid = disk.disk.uuid.clone();
+        }
+        
+        tracing::info!(
+            "Merging into existing disk '{}': movies={}, tvshows={}",
+            label, has_movies, has_tvshows
+        );
+    } else {
+        // New disk: insert directly
+        central.disks.insert(label.clone(), disk.disk.clone());
+        tracing::info!(
+            "Adding new disk '{}': movies={}, tvshows={}",
+            label, has_movies, has_tvshows
+        );
+    }
+    
+    // Remove old entries ONLY for the media types being updated
+    // This is the key change: we don't remove all entries, just the ones being replaced
+    if has_movies {
+        central.movies.retain(|m| m.disk != label);
+        central.movies.extend(disk.movies);
+    }
+    
+    if has_tvshows {
+        central.tvshows.retain(|t| t.disk != label);
+        central.tvshows.extend(disk.tvshows);
+    }
+    
+    // Update disk counts in the disk info
+    if let Some(disk_info) = central.disks.get_mut(&label) {
+        disk_info.movie_count = central.movies.iter().filter(|m| m.disk == label).count();
+        disk_info.tvshow_count = central.tvshows.iter().filter(|t| t.disk == label).count();
+        disk_info.total_size_bytes = 
+            central.movies.iter().filter(|m| m.disk == label).map(|m| m.size_bytes).sum::<u64>() +
+            central.tvshows.iter().filter(|t| t.disk == label).map(|t| t.size_bytes).sum::<u64>();
+    }
     
     // Rebuild indexes and update statistics
     central.rebuild_indexes();
@@ -747,6 +799,628 @@ pub fn search(
         movies,
         tvshows,
         collections,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::index::{CentralIndex, DiskIndex, DiskInfo, MovieEntry, TvShowEntry};
+    use std::collections::HashMap;
+    
+    /// Create a test DiskIndex with movies
+    fn create_movie_disk_index(label: &str, path: &str, movies: Vec<MovieEntry>) -> DiskIndex {
+        let mut paths = HashMap::new();
+        paths.insert("movies".to_string(), path.to_string());
+        
+        DiskIndex {
+            version: "1.0".to_string(),
+            disk: DiskInfo {
+                label: label.to_string(),
+                uuid: Some("test-uuid".to_string()),
+                last_indexed: chrono::Utc::now().to_rfc3339(),
+                movie_count: movies.len(),
+                tvshow_count: 0,
+                total_size_bytes: movies.iter().map(|m| m.size_bytes).sum(),
+                base_path: path.to_string(),
+                paths,
+            },
+            movies,
+            tvshows: Vec::new(),
+        }
+    }
+    
+    /// Create a test DiskIndex with TV shows
+    fn create_tvshow_disk_index(label: &str, path: &str, tvshows: Vec<TvShowEntry>) -> DiskIndex {
+        let mut paths = HashMap::new();
+        paths.insert("tvshows".to_string(), path.to_string());
+        
+        DiskIndex {
+            version: "1.0".to_string(),
+            disk: DiskInfo {
+                label: label.to_string(),
+                uuid: Some("test-uuid".to_string()),
+                last_indexed: chrono::Utc::now().to_rfc3339(),
+                movie_count: 0,
+                tvshow_count: tvshows.len(),
+                total_size_bytes: tvshows.iter().map(|t| t.size_bytes).sum(),
+                base_path: path.to_string(),
+                paths,
+            },
+            movies: Vec::new(),
+            tvshows,
+        }
+    }
+    
+    /// Create a test movie entry
+    fn create_test_movie(id: &str, title: &str, disk: &str, tmdb_id: u64) -> MovieEntry {
+        MovieEntry {
+            id: id.to_string(),
+            disk: disk.to_string(),
+            disk_uuid: Some("test-uuid".to_string()),
+            relative_path: format!("{}/movie.nfo", title),
+            title: title.to_string(),
+            original_title: None,
+            year: Some(2024),
+            tmdb_id: Some(tmdb_id),
+            imdb_id: None,
+            collection_id: None,
+            collection_name: None,
+            collection_total_movies: None,
+            country: Some("US".to_string()),
+            genres: vec!["Action".to_string()],
+            actors: vec!["Actor1".to_string()],
+            directors: vec!["Director1".to_string()],
+            runtime: Some(120),
+            rating: Some(7.5),
+            size_bytes: 1_000_000_000,
+            resolution: Some("1080p".to_string()),
+            indexed_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+    
+    /// Create a test TV show entry
+    fn create_test_tvshow(id: &str, title: &str, disk: &str, tmdb_id: u64) -> TvShowEntry {
+        TvShowEntry {
+            id: id.to_string(),
+            disk: disk.to_string(),
+            disk_uuid: Some("test-uuid".to_string()),
+            relative_path: format!("{}/tvshow.nfo", title),
+            title: title.to_string(),
+            original_title: None,
+            year: Some(2024),
+            tmdb_id: Some(tmdb_id),
+            imdb_id: None,
+            country: Some("US".to_string()),
+            genres: vec!["Drama".to_string()],
+            actors: vec!["Actor1".to_string()],
+            seasons: 3,
+            episodes: 24,
+            size_bytes: 5_000_000_000,
+            indexed_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+    
+    #[test]
+    fn test_merge_disk_into_central_new_disk() {
+        let mut central = CentralIndex::default();
+        
+        let movies = vec![
+            create_test_movie("m1", "Movie 1", "TestDisk", 1001),
+            create_test_movie("m2", "Movie 2", "TestDisk", 1002),
+        ];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        
+        merge_disk_into_central(&mut central, disk);
+        
+        assert_eq!(central.disks.len(), 1);
+        assert_eq!(central.movies.len(), 2);
+        assert_eq!(central.tvshows.len(), 0);
+        
+        let disk_info = central.disks.get("TestDisk").unwrap();
+        assert_eq!(disk_info.movie_count, 2);
+        assert_eq!(disk_info.tvshow_count, 0);
+        assert!(disk_info.paths.contains_key("movies"));
+    }
+    
+    #[test]
+    fn test_merge_disk_into_central_composite_storage() {
+        let mut central = CentralIndex::default();
+        
+        // First: add movies
+        let movies = vec![
+            create_test_movie("m1", "Movie 1", "TestDisk", 1001),
+        ];
+        let movie_disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, movie_disk);
+        
+        assert_eq!(central.movies.len(), 1);
+        assert_eq!(central.tvshows.len(), 0);
+        
+        // Second: add tvshows (same disk label, different path)
+        let tvshows = vec![
+            create_test_tvshow("t1", "TV Show 1", "TestDisk", 2001),
+        ];
+        let tvshow_disk = create_tvshow_disk_index("TestDisk", "/mnt/TestDisk/TVShows", tvshows);
+        merge_disk_into_central(&mut central, tvshow_disk);
+        
+        // Verify composite storage works
+        assert_eq!(central.disks.len(), 1, "Should still be one disk");
+        assert_eq!(central.movies.len(), 1, "Movies should be preserved");
+        assert_eq!(central.tvshows.len(), 1, "TV shows should be added");
+        
+        let disk_info = central.disks.get("TestDisk").unwrap();
+        assert_eq!(disk_info.movie_count, 1);
+        assert_eq!(disk_info.tvshow_count, 1);
+        assert!(disk_info.paths.contains_key("movies"), "Movies path should exist");
+        assert!(disk_info.paths.contains_key("tvshows"), "TVShows path should exist");
+        assert_eq!(disk_info.paths.get("movies").unwrap(), "/mnt/TestDisk/Movies");
+        assert_eq!(disk_info.paths.get("tvshows").unwrap(), "/mnt/TestDisk/TVShows");
+    }
+    
+    #[test]
+    fn test_merge_disk_into_central_update_movies_only() {
+        let mut central = CentralIndex::default();
+        
+        // Initial: add movies and tvshows
+        let movies = vec![
+            create_test_movie("m1", "Movie 1", "TestDisk", 1001),
+        ];
+        let movie_disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, movie_disk);
+        
+        let tvshows = vec![
+            create_test_tvshow("t1", "TV Show 1", "TestDisk", 2001),
+        ];
+        let tvshow_disk = create_tvshow_disk_index("TestDisk", "/mnt/TestDisk/TVShows", tvshows);
+        merge_disk_into_central(&mut central, tvshow_disk);
+        
+        assert_eq!(central.movies.len(), 1);
+        assert_eq!(central.tvshows.len(), 1);
+        
+        // Update: re-scan movies with new movie
+        let new_movies = vec![
+            create_test_movie("m1", "Movie 1", "TestDisk", 1001),
+            create_test_movie("m2", "Movie 2", "TestDisk", 1002),
+        ];
+        let updated_movie_disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", new_movies);
+        merge_disk_into_central(&mut central, updated_movie_disk);
+        
+        // Verify: movies updated, tvshows preserved
+        assert_eq!(central.movies.len(), 2, "Movies should be updated to 2");
+        assert_eq!(central.tvshows.len(), 1, "TV shows should be preserved");
+        
+        let disk_info = central.disks.get("TestDisk").unwrap();
+        assert_eq!(disk_info.movie_count, 2);
+        assert_eq!(disk_info.tvshow_count, 1);
+    }
+    
+    #[test]
+    fn test_merge_disk_into_central_separate_disks() {
+        let mut central = CentralIndex::default();
+        
+        // Disk 1: movies
+        let movies = vec![
+            create_test_movie("m1", "Movie 1", "Disk1", 1001),
+        ];
+        let disk1 = create_movie_disk_index("Disk1", "/mnt/Disk1/Movies", movies);
+        merge_disk_into_central(&mut central, disk1);
+        
+        // Disk 2: different disk, movies
+        let movies2 = vec![
+            create_test_movie("m2", "Movie 2", "Disk2", 1002),
+        ];
+        let disk2 = create_movie_disk_index("Disk2", "/mnt/Disk2/Movies", movies2);
+        merge_disk_into_central(&mut central, disk2);
+        
+        assert_eq!(central.disks.len(), 2);
+        assert_eq!(central.movies.len(), 2);
+        
+        // Verify each disk has its own entry
+        assert!(central.disks.contains_key("Disk1"));
+        assert!(central.disks.contains_key("Disk2"));
+    }
+    
+    #[test]
+    fn test_search_by_title() {
+        let mut central = CentralIndex::default();
+        
+        let movies = vec![
+            create_test_movie("m1", "The Matrix", "TestDisk", 1001),
+            create_test_movie("m2", "Inception", "TestDisk", 1002),
+        ];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            Some("matrix"),
+            None, None, None, None, None, None, None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "The Matrix");
+    }
+    
+    #[test]
+    fn test_search_by_year() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Movie 2020", "TestDisk", 1001);
+        movie1.year = Some(2020);
+        let mut movie2 = create_test_movie("m2", "Movie 2024", "TestDisk", 1002);
+        movie2.year = Some(2024);
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None, None, None, None,
+            Some(2024),
+            None, None, None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "Movie 2024");
+    }
+    
+    #[test]
+    fn test_disk_info_paths_extensible() {
+        let mut disk_info = DiskInfo {
+            label: "TestDisk".to_string(),
+            uuid: None,
+            last_indexed: chrono::Utc::now().to_rfc3339(),
+            movie_count: 0,
+            tvshow_count: 0,
+            total_size_bytes: 0,
+            base_path: String::new(),
+            paths: HashMap::new(),
+        };
+        
+        // Add movies path
+        disk_info.paths.insert("movies".to_string(), "/path/to/movies".to_string());
+        
+        // Add tvshows path
+        disk_info.paths.insert("tvshows".to_string(), "/path/to/tvshows".to_string());
+        
+        // Future extensibility: add music path
+        disk_info.paths.insert("music".to_string(), "/path/to/music".to_string());
+        
+        assert_eq!(disk_info.paths.len(), 3);
+        assert!(disk_info.paths.contains_key("movies"));
+        assert!(disk_info.paths.contains_key("tvshows"));
+        assert!(disk_info.paths.contains_key("music"));
+    }
+    
+    #[test]
+    fn test_search_by_actor() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Movie A", "TestDisk", 1001);
+        movie1.actors = vec!["Tom Hanks".to_string(), "Meg Ryan".to_string()];
+        let mut movie2 = create_test_movie("m2", "Movie B", "TestDisk", 1002);
+        movie2.actors = vec!["Brad Pitt".to_string()];
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None,
+            Some("Tom Hanks"),
+            None, None, None, None, None, None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "Movie A");
+    }
+    
+    #[test]
+    fn test_search_by_director() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Movie A", "TestDisk", 1001);
+        movie1.directors = vec!["Steven Spielberg".to_string()];
+        let mut movie2 = create_test_movie("m2", "Movie B", "TestDisk", 1002);
+        movie2.directors = vec!["Christopher Nolan".to_string()];
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None, None,
+            Some("Nolan"),
+            None, None, None, None, None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "Movie B");
+    }
+    
+    #[test]
+    fn test_search_by_genre() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Action Movie", "TestDisk", 1001);
+        movie1.genres = vec!["Action".to_string(), "Thriller".to_string()];
+        let mut movie2 = create_test_movie("m2", "Comedy Movie", "TestDisk", 1002);
+        movie2.genres = vec!["Comedy".to_string()];
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None, None, None, None, None, None,
+            Some("Comedy"),
+            None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "Comedy Movie");
+    }
+    
+    #[test]
+    fn test_search_by_country() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "US Movie", "TestDisk", 1001);
+        movie1.country = Some("US".to_string());
+        let mut movie2 = create_test_movie("m2", "CN Movie", "TestDisk", 1002);
+        movie2.country = Some("CN".to_string());
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None, None, None, None, None, None, None,
+            Some("CN"),
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "CN Movie");
+    }
+    
+    #[test]
+    fn test_search_tvshows() {
+        let mut central = CentralIndex::default();
+        
+        let tvshows = vec![
+            create_test_tvshow("t1", "Breaking Bad", "TestDisk", 2001),
+            create_test_tvshow("t2", "Game of Thrones", "TestDisk", 2002),
+        ];
+        let disk = create_tvshow_disk_index("TestDisk", "/mnt/TestDisk/TVShows", tvshows);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            Some("breaking"),
+            None, None, None, None, None, None, None,
+        );
+        
+        assert_eq!(results.tvshows.len(), 1);
+        assert_eq!(results.tvshows[0].title, "Breaking Bad");
+    }
+    
+    #[test]
+    fn test_collection_indexing() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Pirates 1", "TestDisk", 1001);
+        movie1.collection_id = Some(100);
+        movie1.collection_name = Some("Pirates of the Caribbean Collection".to_string());
+        movie1.collection_total_movies = Some(5);
+        
+        let mut movie2 = create_test_movie("m2", "Pirates 2", "TestDisk", 1002);
+        movie2.collection_id = Some(100);
+        movie2.collection_name = Some("Pirates of the Caribbean Collection".to_string());
+        movie2.collection_total_movies = Some(5);
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        // Verify collection was created
+        assert_eq!(central.collections.len(), 1);
+        let collection = central.collections.get(&100).unwrap();
+        assert_eq!(collection.name, "Pirates of the Caribbean Collection");
+        assert_eq!(collection.owned_count, 2);
+        assert_eq!(collection.total_in_collection, 5);
+        assert_eq!(collection.movies.len(), 2);
+    }
+    
+    #[test]
+    fn test_statistics_update() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "US Movie 2020", "TestDisk", 1001);
+        movie1.country = Some("US".to_string());
+        movie1.year = Some(2020);
+        movie1.size_bytes = 1_000_000_000;
+        
+        let mut movie2 = create_test_movie("m2", "CN Movie 2024", "TestDisk", 1002);
+        movie2.country = Some("CN".to_string());
+        movie2.year = Some(2024);
+        movie2.size_bytes = 2_000_000_000;
+        
+        let movies = vec![movie1, movie2];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        // Verify statistics
+        assert_eq!(central.statistics.total_movies, 2);
+        assert_eq!(central.statistics.total_disks, 1);
+        assert_eq!(central.statistics.total_size_bytes, 3_000_000_000);
+        assert_eq!(central.statistics.by_country.get("US"), Some(&1));
+        assert_eq!(central.statistics.by_country.get("CN"), Some(&1));
+        assert_eq!(central.statistics.by_decade.get("2020s"), Some(&2));
+    }
+    
+    #[test]
+    fn test_find_duplicates_same_tmdb_id() {
+        let mut central = CentralIndex::default();
+        
+        // Same movie on two different disks (same TMDB ID)
+        let movie1 = create_test_movie("m1", "The Matrix", "Disk1", 1001);
+        let disk1 = create_movie_disk_index("Disk1", "/mnt/Disk1/Movies", vec![movie1]);
+        merge_disk_into_central(&mut central, disk1);
+        
+        let movie2 = create_test_movie("m2", "The Matrix HD", "Disk2", 1001); // Same TMDB ID!
+        let disk2 = create_movie_disk_index("Disk2", "/mnt/Disk2/Movies", vec![movie2]);
+        merge_disk_into_central(&mut central, disk2);
+        
+        // Find duplicates by TMDB ID
+        let mut tmdb_count: HashMap<u64, Vec<&MovieEntry>> = HashMap::new();
+        for movie in &central.movies {
+            if let Some(tmdb_id) = movie.tmdb_id {
+                tmdb_count.entry(tmdb_id).or_default().push(movie);
+            }
+        }
+        
+        let duplicates: Vec<_> = tmdb_count.iter()
+            .filter(|(_, movies)| movies.len() > 1)
+            .collect();
+        
+        assert_eq!(duplicates.len(), 1);
+        let (tmdb_id, movies) = duplicates[0];
+        assert_eq!(*tmdb_id, 1001);
+        assert_eq!(movies.len(), 2);
+        
+        // Verify they are on different disks
+        let disks: std::collections::HashSet<_> = movies.iter().map(|m| &m.disk).collect();
+        assert_eq!(disks.len(), 2);
+    }
+    
+    #[test]
+    fn test_remove_disk_from_central() {
+        let mut central = CentralIndex::default();
+        
+        // Add movies to disk
+        let movies = vec![
+            create_test_movie("m1", "Movie 1", "TestDisk", 1001),
+        ];
+        let movie_disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, movie_disk);
+        
+        // Add tvshows to same disk
+        let tvshows = vec![
+            create_test_tvshow("t1", "TV Show 1", "TestDisk", 2001),
+        ];
+        let tvshow_disk = create_tvshow_disk_index("TestDisk", "/mnt/TestDisk/TVShows", tvshows);
+        merge_disk_into_central(&mut central, tvshow_disk);
+        
+        assert_eq!(central.disks.len(), 1);
+        assert_eq!(central.movies.len(), 1);
+        assert_eq!(central.tvshows.len(), 1);
+        
+        // Simulate remove disk
+        let disk_label = "TestDisk";
+        central.movies.retain(|m| m.disk != disk_label);
+        central.tvshows.retain(|t| t.disk != disk_label);
+        central.disks.remove(disk_label);
+        central.rebuild_indexes();
+        central.update_statistics();
+        
+        // Verify disk is removed
+        assert_eq!(central.disks.len(), 0);
+        assert_eq!(central.movies.len(), 0);
+        assert_eq!(central.tvshows.len(), 0);
+        assert_eq!(central.statistics.total_movies, 0);
+        assert_eq!(central.statistics.total_tvshows, 0);
+    }
+    
+    #[test]
+    fn test_backward_compatibility_base_path() {
+        // Simulate loading old index with only base_path (no paths HashMap)
+        let disk_info_json = r#"{
+            "label": "OldDisk",
+            "uuid": "old-uuid",
+            "last_indexed": "2024-01-01T00:00:00Z",
+            "movie_count": 10,
+            "tvshow_count": 0,
+            "total_size_bytes": 10000000,
+            "base_path": "/mnt/OldDisk/Movies"
+        }"#;
+        
+        let disk_info: DiskInfo = serde_json::from_str(disk_info_json).unwrap();
+        
+        // Verify backward compatibility - paths should be empty (default)
+        assert_eq!(disk_info.label, "OldDisk");
+        assert_eq!(disk_info.base_path, "/mnt/OldDisk/Movies");
+        assert!(disk_info.paths.is_empty()); // Default empty HashMap
+    }
+    
+    #[test]
+    fn test_search_year_range() {
+        let mut central = CentralIndex::default();
+        
+        let mut movie1 = create_test_movie("m1", "Movie 2018", "TestDisk", 1001);
+        movie1.year = Some(2018);
+        let mut movie2 = create_test_movie("m2", "Movie 2020", "TestDisk", 1002);
+        movie2.year = Some(2020);
+        let mut movie3 = create_test_movie("m3", "Movie 2024", "TestDisk", 1003);
+        movie3.year = Some(2024);
+        
+        let movies = vec![movie1, movie2, movie3];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        let results = search(
+            &central,
+            None, None, None, None, None,
+            Some((2019, 2022)), // Year range
+            None, None,
+        );
+        
+        assert_eq!(results.movies.len(), 1);
+        assert_eq!(results.movies[0].title, "Movie 2020");
+    }
+    
+    #[test]
+    fn test_collection_complete_incomplete() {
+        let mut central = CentralIndex::default();
+        
+        // Collection A: 2 of 2 movies owned (complete)
+        let mut movie1 = create_test_movie("m1", "Trilogy A-1", "TestDisk", 1001);
+        movie1.collection_id = Some(100);
+        movie1.collection_name = Some("Complete Trilogy".to_string());
+        movie1.collection_total_movies = Some(2);
+        
+        let mut movie2 = create_test_movie("m2", "Trilogy A-2", "TestDisk", 1002);
+        movie2.collection_id = Some(100);
+        movie2.collection_name = Some("Complete Trilogy".to_string());
+        movie2.collection_total_movies = Some(2);
+        
+        // Collection B: 1 of 3 movies owned (incomplete)
+        let mut movie3 = create_test_movie("m3", "Series B-1", "TestDisk", 1003);
+        movie3.collection_id = Some(200);
+        movie3.collection_name = Some("Incomplete Series".to_string());
+        movie3.collection_total_movies = Some(3);
+        
+        let movies = vec![movie1, movie2, movie3];
+        let disk = create_movie_disk_index("TestDisk", "/mnt/TestDisk/Movies", movies);
+        merge_disk_into_central(&mut central, disk);
+        
+        // Verify collection statistics
+        assert_eq!(central.statistics.complete_collections, 1);
+        assert_eq!(central.statistics.incomplete_collections, 1);
+        
+        // Verify collection details
+        let collection_a = central.collections.get(&100).unwrap();
+        assert_eq!(collection_a.owned_count, 2);
+        assert_eq!(collection_a.total_in_collection, 2);
+        
+        let collection_b = central.collections.get(&200).unwrap();
+        assert_eq!(collection_b.owned_count, 1);
+        assert_eq!(collection_b.total_in_collection, 3);
     }
 }
 
