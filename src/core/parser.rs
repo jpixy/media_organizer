@@ -648,23 +648,60 @@ fn regex_match_leading_number(s: &str) -> Option<u16> {
 /// - "标题.05" → episode 5
 /// - "Show Name 10" → episode 10
 /// - "不伦食堂-04 end" → episode 4 (ignores "end" suffix)
+/// - "幽灵 01_超清" → episode 1 (handles quality suffix after number)
+/// - "那年青春我们正好02.1280高清" → episode 2 (CJK title + number + resolution)
+/// - "孤芳不自赏02.1024高清" → episode 2 (CJK title + number + resolution)
 fn regex_match_trailing_episode(s: &str) -> Option<u16> {
     let trimmed = s.trim();
     
-    // Pattern: title followed by separator and episode number at end
-    // Separator can be -, _, ., or space
-    // Optionally followed by "end", "END", "final" etc.
-    let re = regex::Regex::new(r"[-_.\s](\d{1,3})(?:\s+(?:end|final|END|FINAL))?$").ok()?;
-    let caps = re.captures(trimmed)?;
-    let num: u16 = caps.get(1)?.as_str().parse().ok()?;
-    
-    // Sanity check: episode numbers are usually 1-999
-    // Also filter out numbers that are likely years (1900-2099)
-    if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
-        Some(num)
-    } else {
-        None
+    // Pattern 1: Episode number at end, optionally followed by "end/final"
+    // Examples: "Show-04", "Title.05", "Show Name 10", "不伦食堂-04 end"
+    let re1 = regex::Regex::new(r"[-_.\s](\d{1,3})(?:\s+(?:end|final|END|FINAL))?$").ok()?;
+    if let Some(caps) = re1.captures(trimmed) {
+        if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
+            if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
+                return Some(num);
+            }
+        }
     }
+    
+    // Pattern 2: Episode number followed by separator and quality/description suffix
+    // Examples: "幽灵 01_超清", "Show 02_HD", "Title 03 高清"
+    // This handles CJK content where quality info comes after episode number
+    let re2 = regex::Regex::new(r"[\s](\d{1,3})[_\s]").ok()?;
+    if let Some(caps) = re2.captures(trimmed) {
+        if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
+            if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
+                return Some(num);
+            }
+        }
+    }
+    
+    // Pattern 3: CJK title directly followed by episode number then dot and resolution
+    // Examples: "那年青春我们正好02.1280高清未删减版", "孤芳不自赏02.1024高清"
+    // Pattern: CJK char + 2-3 digit number + dot + 3-4 digit resolution
+    let re3 = regex::Regex::new(r"[\u4e00-\u9fa5](\d{2,3})\.(?:1080|720|1024|1280|480|576|2160|4K|4k)").ok()?;
+    if let Some(caps) = re3.captures(trimmed) {
+        if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
+            if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
+                return Some(num);
+            }
+        }
+    }
+    
+    // Pattern 4: CJK title directly followed by episode number at end
+    // Examples: "[迅雷下载]那年青春我们正好02", "孤芳不自赏27"
+    // Must end with CJK char + 2 digit number (to avoid matching years)
+    let re4 = regex::Regex::new(r"[\u4e00-\u9fa5](\d{2})$").ok()?;
+    if let Some(caps) = re4.captures(trimmed) {
+        if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
+            if (1..=99).contains(&num) {
+                return Some(num);
+            }
+        }
+    }
+    
+    None
 }
 
 /// Check if a filename matches the organized output format.

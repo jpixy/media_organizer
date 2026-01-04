@@ -62,6 +62,15 @@ pub struct OllamaClient {
     client: reqwest::Client,
 }
 
+/// Options for generation.
+#[derive(Debug, Serialize)]
+struct GenerateOptions {
+    /// Temperature for sampling (0 = deterministic, 1 = creative)
+    temperature: f32,
+    /// Random seed for reproducibility
+    seed: u32,
+}
+
 /// Generate request payload.
 #[derive(Debug, Serialize)]
 struct GenerateRequest {
@@ -70,6 +79,8 @@ struct GenerateRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    /// Generation options (temperature, seed, etc.)
+    options: GenerateOptions,
 }
 
 /// Generate response.
@@ -143,6 +154,12 @@ impl OllamaClient {
             prompt: prompt.to_string(),
             stream: false,
             format: format.map(|s| s.to_string()),
+            // Set temperature=0 and fixed seed for deterministic output
+            // This ensures same input always produces same output
+            options: GenerateOptions {
+                temperature: 0.0,
+                seed: 42,
+            },
         };
 
         let resp = self

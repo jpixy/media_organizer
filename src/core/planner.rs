@@ -3376,6 +3376,26 @@ impl Planner {
             return None;
         }
 
+        // SPECIAL CASE: For pure CJK queries, if TMDB returns only one result,
+        // trust TMDB's matching even if the result name is in a different language.
+        // This handles cases like searching "人生复本" returning "Dark Matter".
+        // TMDB internally maps Chinese titles to original titles.
+        let is_pure_cjk = query.chars().all(|c| {
+            c.is_whitespace() || 
+            ('\u{4E00}'..='\u{9FFF}').contains(&c) || // CJK Unified Ideographs
+            ('\u{3400}'..='\u{4DBF}').contains(&c) || // CJK Extension A
+            ('\u{AC00}'..='\u{D7AF}').contains(&c) || // Korean Hangul
+            ('\u{3040}'..='\u{30FF}').contains(&c)    // Japanese Hiragana/Katakana
+        }) && query.chars().any(|c| !c.is_whitespace());
+        
+        if is_pure_cjk && results.len() == 1 {
+            tracing::info!(
+                "TMDB single result for CJK query '{}': trusting result '{}'",
+                query, results[0].name
+            );
+            return Some(&results[0]);
+        }
+
         let query_lower = query.to_lowercase();
         let mut scored_results: Vec<(usize, i32)> = Vec::new();
 
