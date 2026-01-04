@@ -4512,31 +4512,7 @@ mod tests {
         assert!(path.starts_with(source));
     }
 
-    #[test]
-    fn test_save_and_load_plan() {
-        let plan = Plan {
-            version: "1.0".to_string(),
-            created_at: "2024-01-01T00:00:00Z".to_string(),
-            media_type: Some(MediaType::Movies),
-            source_path: PathBuf::from("/source"),
-            target_path: PathBuf::from("/target"),
-            items: vec![],
-            samples: vec![],
-            unknown: vec![],
-        };
-
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let plan_path = temp_dir.path().join("test_plan.json");
-
-        // Save
-        save_plan(&plan, &plan_path).unwrap();
-        assert!(plan_path.exists());
-
-        // Load
-        let loaded = load_plan(&plan_path).unwrap();
-        assert_eq!(loaded.version, plan.version);
-        assert_eq!(loaded.source_path, plan.source_path);
-    }
+    // test_save_and_load_plan moved to tests/io_tests.rs
 }
 
 

@@ -337,18 +337,7 @@ mod tests {
         assert!(!result.is_success());
     }
 
-    #[test]
-    fn test_load_save_rollback() {
-        let rollback = Rollback::default();
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let path = temp_dir.path().join("test_rollback.json");
-
-        save_rollback(&rollback, &path).unwrap();
-        assert!(path.exists());
-
-        let loaded = load_rollback(&path).unwrap();
-        assert_eq!(loaded.version, rollback.version);
-    }
+    // test_load_save_rollback moved to tests/io_tests.rs
 }
 
 

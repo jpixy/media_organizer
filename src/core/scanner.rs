@@ -283,8 +283,6 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn test_is_video_extension() {
@@ -314,57 +312,7 @@ mod tests {
         assert!(!is_sample_filename("sampler.mkv")); // Don't match "sampler"
     }
 
-    #[test]
-    fn test_scan_empty_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let result = scan_directory(temp_dir.path()).unwrap();
-        
-        assert_eq!(result.videos.len(), 0);
-        assert_eq!(result.samples.len(), 0);
-    }
-
-    #[test]
-    fn test_scan_with_video_files() {
-        let temp_dir = TempDir::new().unwrap();
-        
-        // Create a mock video file (just an empty file with video extension)
-        let video_path = temp_dir.path().join("movie.mkv");
-        fs::write(&video_path, "fake video content").unwrap();
-        
-        let result = scan_directory(temp_dir.path()).unwrap();
-        
-        assert_eq!(result.videos.len(), 1);
-        assert_eq!(result.videos[0].filename, "movie.mkv");
-        assert!(!result.videos[0].is_sample);
-    }
-
-    #[test]
-    fn test_scan_with_sample_folder() {
-        let temp_dir = TempDir::new().unwrap();
-        
-        // Create Sample folder with video
-        // Note: Sample folders are now treated as extras and skipped during scanning
-        // They will be moved as-is with the parent movie
-        let sample_dir = temp_dir.path().join("Sample");
-        fs::create_dir(&sample_dir).unwrap();
-        fs::write(sample_dir.join("sample.mkv"), "fake sample").unwrap();
-        
-        // Create regular video
-        fs::write(temp_dir.path().join("movie.mkv"), "fake video").unwrap();
-        
-        let result = scan_directory(temp_dir.path()).unwrap();
-        
-        // Only the regular movie should be scanned
-        // Sample folder videos are skipped (treated as extras)
-        assert_eq!(result.videos.len(), 1);
-        assert_eq!(result.samples.len(), 0);  // Sample folder files are skipped
-    }
-
-    #[test]
-    fn test_scan_nonexistent_path() {
-        let result = scan_directory(Path::new("/nonexistent/path"));
-        assert!(result.is_err());
-    }
+    // Integration tests for scan_directory() moved to tests/scanner_tests.rs
 }
 
 
