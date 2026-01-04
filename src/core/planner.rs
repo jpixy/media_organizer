@@ -4830,4 +4830,69 @@ mod tests {
     }
 
     // test_save_and_load_plan moved to tests/io_tests.rs
+
+    #[test]
+    fn test_language_code_to_name() {
+        // Major languages
+        assert_eq!(language_code_to_name("en"), "English");
+        assert_eq!(language_code_to_name("zh"), "Chinese");
+        assert_eq!(language_code_to_name("ja"), "Japanese");
+        assert_eq!(language_code_to_name("ko"), "Korean");
+        assert_eq!(language_code_to_name("fr"), "French");
+        assert_eq!(language_code_to_name("de"), "German");
+        assert_eq!(language_code_to_name("es"), "Spanish");
+        assert_eq!(language_code_to_name("it"), "Italian");
+
+        // Case insensitive
+        assert_eq!(language_code_to_name("EN"), "English");
+        assert_eq!(language_code_to_name("ZH"), "Chinese");
+
+        // Asian languages
+        assert_eq!(language_code_to_name("th"), "Thai");
+        assert_eq!(language_code_to_name("vi"), "Vietnamese");
+        assert_eq!(language_code_to_name("id"), "Indonesian");
+
+        // Chinese variants
+        assert_eq!(language_code_to_name("cn"), "Chinese");
+        assert_eq!(language_code_to_name("yue"), "Cantonese");
+
+        // Unknown language - returns uppercase code
+        assert_eq!(language_code_to_name("xx"), "XX");
+        assert_eq!(language_code_to_name("unknown"), "UNKNOWN");
+    }
+
+    #[test]
+    fn test_format_language_folder() {
+        // Standard cases
+        assert_eq!(format_language_folder("en"), "EN_English");
+        assert_eq!(format_language_folder("zh"), "ZH_Chinese");
+        assert_eq!(format_language_folder("ja"), "JA_Japanese");
+        assert_eq!(format_language_folder("ko"), "KO_Korean");
+        assert_eq!(format_language_folder("fr"), "FR_French");
+
+        // Case insensitive input
+        assert_eq!(format_language_folder("EN"), "EN_English");
+        assert_eq!(format_language_folder("ZH"), "ZH_Chinese");
+
+        // Unknown language
+        assert_eq!(format_language_folder("xx"), "XX_XX");
+    }
+
+    #[test]
+    fn test_country_code_to_name() {
+        // Major countries (used for NFO metadata)
+        assert_eq!(country_code_to_name("US"), "United States");
+        assert_eq!(country_code_to_name("CN"), "China");
+        assert_eq!(country_code_to_name("JP"), "Japan");
+        assert_eq!(country_code_to_name("KR"), "South Korea");
+        assert_eq!(country_code_to_name("GB"), "United Kingdom");
+        assert_eq!(country_code_to_name("ID"), "Indonesia");
+
+        // Case insensitive
+        assert_eq!(country_code_to_name("us"), "United States");
+        assert_eq!(country_code_to_name("cn"), "China");
+
+        // Unknown country - returns uppercase code
+        assert_eq!(country_code_to_name("XX"), "XX");
+    }
 }
