@@ -1554,27 +1554,31 @@ impl Planner {
             .map(|gs| gs.iter().map(|g| g.name.clone()).collect())
             .unwrap_or_default();
 
-        let mut countries: Vec<String> = details
-            .production_countries
-            .as_ref()
-            .map(|cs| cs.iter().map(|c| c.name.clone()).collect())
-            .unwrap_or_default();
-
-        let mut country_codes: Vec<String> = details
-            .production_countries
-            .as_ref()
-            .map(|cs| cs.iter().map(|c| c.iso_3166_1.clone()).collect())
-            .unwrap_or_default();
-
-        // Use origin_country as fallback if production_countries is empty
-        if country_codes.is_empty() {
+        // Always prefer origin_country over production_countries
+        // origin_country is more accurate for the content's true origin
+        // production_countries may include co-production countries or have TMDB data errors
+        // Example: "在劫难逃" has origin_country=["CN"] but production_countries=[{MO}]
+        let (mut country_codes, mut countries): (Vec<String>, Vec<String>) =
             if let Some(ref origin) = details.origin_country {
-                country_codes = origin.clone();
-                // Also map country codes to names for consistency
-                countries = origin
-                    .iter()
-                    .map(|code| country_code_to_name(code))
-                    .collect();
+                if !origin.is_empty() {
+                    let codes = origin.clone();
+                    let names = origin
+                        .iter()
+                        .map(|code| country_code_to_name(code))
+                        .collect();
+                    (codes, names)
+                } else {
+                    (Vec::new(), Vec::new())
+                }
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
+        // Fallback: use production_countries if origin_country is empty
+        if country_codes.is_empty() {
+            if let Some(ref pc) = details.production_countries {
+                country_codes = pc.iter().map(|c| c.iso_3166_1.clone()).collect();
+                countries = pc.iter().map(|c| c.name.clone()).collect();
             }
         }
 
