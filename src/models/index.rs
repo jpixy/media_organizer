@@ -479,10 +479,16 @@ impl CentralIndex {
             }
         }
 
-        // By decade
+        // By decade (movies + tvshows)
         self.statistics.by_decade.clear();
         for movie in &self.movies {
             if let Some(year) = movie.year {
+                let decade = format!("{}0s", year / 10);
+                *self.statistics.by_decade.entry(decade).or_insert(0) += 1;
+            }
+        }
+        for tvshow in &self.tvshows {
+            if let Some(year) = tvshow.year {
                 let decade = format!("{}0s", year / 10);
                 *self.statistics.by_decade.entry(decade).or_insert(0) += 1;
             }
