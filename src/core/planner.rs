@@ -37,35 +37,93 @@ type SeasonEpisodesCache =
     Arc<RwLock<HashMap<(u64, u16), Vec<crate::services::tmdb::EpisodeInfo>>>>;
 
 /// Convert ISO 3166-1 country code to country name.
+/// Convert ISO 3166-1 country code to human-readable name.
+/// Used for metadata (countries field in NFO), NOT for folder classification.
 fn country_code_to_name(code: &str) -> String {
     match code.to_uppercase().as_str() {
         "US" => "United States".to_string(),
         "GB" => "United Kingdom".to_string(),
-        "KR" => "South Korea".to_string(),
-        "JP" => "Japan".to_string(),
+        "CA" => "Canada".to_string(),
         "CN" => "China".to_string(),
+        "JP" => "Japan".to_string(),
+        "KR" => "South Korea".to_string(),
         "TW" => "Taiwan".to_string(),
         "HK" => "Hong Kong".to_string(),
         "FR" => "France".to_string(),
         "DE" => "Germany".to_string(),
         "ES" => "Spain".to_string(),
         "IT" => "Italy".to_string(),
-        "CA" => "Canada".to_string(),
         "AU" => "Australia".to_string(),
         "NZ" => "New Zealand".to_string(),
         "IN" => "India".to_string(),
         "TH" => "Thailand".to_string(),
+        "ID" => "Indonesia".to_string(),
         "BR" => "Brazil".to_string(),
         "MX" => "Mexico".to_string(),
         "RU" => "Russia".to_string(),
-        "PL" => "Poland".to_string(),
         "NL" => "Netherlands".to_string(),
         "SE" => "Sweden".to_string(),
         "NO" => "Norway".to_string(),
         "DK" => "Denmark".to_string(),
-        "FI" => "Finland".to_string(),
-        _ => code.to_uppercase(), // Fall back to code if unknown
+        _ => code.to_uppercase(),
     }
+}
+
+/// Convert ISO 639-1 language code to human-readable name.
+/// Used for folder naming: e.g., "zh" -> "Chinese" -> "ZH_Chinese"
+fn language_code_to_name(code: &str) -> String {
+    match code.to_lowercase().as_str() {
+        // Major languages
+        "en" => "English".to_string(),
+        "zh" => "Chinese".to_string(),
+        "ja" => "Japanese".to_string(),
+        "ko" => "Korean".to_string(),
+        "fr" => "French".to_string(),
+        "de" => "German".to_string(),
+        "es" => "Spanish".to_string(),
+        "it" => "Italian".to_string(),
+        "pt" => "Portuguese".to_string(),
+        "ru" => "Russian".to_string(),
+        // Asian languages
+        "th" => "Thai".to_string(),
+        "vi" => "Vietnamese".to_string(),
+        "id" => "Indonesian".to_string(),
+        "ms" => "Malay".to_string(),
+        "tl" => "Filipino".to_string(),
+        "hi" => "Hindi".to_string(),
+        "ta" => "Tamil".to_string(),
+        "te" => "Telugu".to_string(),
+        "bn" => "Bengali".to_string(),
+        // European languages
+        "nl" => "Dutch".to_string(),
+        "pl" => "Polish".to_string(),
+        "sv" => "Swedish".to_string(),
+        "no" => "Norwegian".to_string(),
+        "da" => "Danish".to_string(),
+        "fi" => "Finnish".to_string(),
+        "cs" => "Czech".to_string(),
+        "hu" => "Hungarian".to_string(),
+        "el" => "Greek".to_string(),
+        "tr" => "Turkish".to_string(),
+        "uk" => "Ukrainian".to_string(),
+        "ro" => "Romanian".to_string(),
+        // Middle Eastern
+        "ar" => "Arabic".to_string(),
+        "he" => "Hebrew".to_string(),
+        "fa" => "Persian".to_string(),
+        // Chinese variants (TMDB sometimes uses these)
+        "cn" => "Chinese".to_string(),
+        "yue" => "Cantonese".to_string(),
+        // Fallback
+        _ => code.to_uppercase(),
+    }
+}
+
+/// Format language folder name from original_language.
+/// Returns format like "ZH_Chinese", "EN_English", etc.
+fn format_language_folder(original_language: &str) -> String {
+    let name = language_code_to_name(original_language);
+    format!("{}_{}", original_language.to_uppercase(), name)
 }
 
 /// Planner configuration.
@@ -2356,66 +2414,6 @@ impl Planner {
     /// Returns format like "CN_China", "US_UnitedStates", "KR_SouthKorea".
     /// Format country folder name from ISO code and country name.
     /// Uses original_language to pick the best country for co-productions.
-    fn format_country_folder(
-        &self,
-        codes: &[String],
-        names: &[String],
-        original_language: &str,
-    ) -> Option<String> {
-        if codes.is_empty() || names.is_empty() {
-            return None;
-        }
-
-        // Map language code to likely country code
-        let lang_to_country = |lang: &str| -> Option<&str> {
-            match lang {
-                "ko" => Some("KR"),
-                "ja" => Some("JP"),
-                "zh" => Some("CN"),
-                "en" => Some("US"), // Default English to US
-                "fr" => Some("FR"),
-                "de" => Some("DE"),
-                "es" => Some("ES"),
-                "it" => Some("IT"),
-                "ru" => Some("RU"),
-                "pt" => Some("BR"),
-                "hi" => Some("IN"),
-                "th" => Some("TH"),
-                _ => None,
-            }
-        };
-
-        // Try to find a country matching the original language
-        let preferred_country = lang_to_country(original_language);
-
-        let (code, name) = if let Some(pref_code) = preferred_country {
-            // Find the index of the preferred country
-            if let Some(idx) = codes.iter().position(|c| c.eq_ignore_ascii_case(pref_code)) {
-                (&codes[idx], &names[idx])
-            } else {
-                // Preferred country not in list, use first
-                (&codes[0], &names[0])
-            }
-        } else {
-            // No language preference, use first country
-            (&codes[0], &names[0])
-        };
-
-        // Remove spaces from country name and capitalize each word
-        let name_no_spaces: String = name
-            .split_whitespace()
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            })
-            .collect();
-
-        Some(format!("{}_{}", code.to_uppercase(), name_no_spaces))
-    }
-
     /// Deduplicate operations across all items.
     ///
     /// This handles cases where:
@@ -4410,37 +4408,36 @@ impl Planner {
             }
         };
 
-        // Get country folder name (e.g., "CN_China", "US_UnitedStates")
-        // Uses original_language to determine the best country for co-productions
-        let country_folder_opt = match media_type {
-            MediaType::Movies => movie_metadata.as_ref().and_then(|m| {
-                self.format_country_folder(&m.country_codes, &m.countries, &m.original_language)
-            }),
-            MediaType::TvShows => tvshow_metadata.as_ref().and_then(|(show, _)| {
-                self.format_country_folder(
-                    &show.country_codes,
-                    &show.countries,
-                    &show.original_language,
-                )
-            }),
+        // Get language folder name (e.g., "ZH_Chinese", "EN_English", "JA_Japanese")
+        // Uses original_language from TMDB for classification
+        let language_folder = match media_type {
+            MediaType::Movies => {
+                movie_metadata
+                    .as_ref()
+                    .map(|m| format_language_folder(&m.original_language))
+            }
+            MediaType::TvShows => {
+                tvshow_metadata
+                    .as_ref()
+                    .map(|(show, _)| format_language_folder(&show.original_language))
+            }
         };
 
         // Principle: prefer skipping over wrong classification
-        // If we can't determine the country, skip this file
-        let country_folder = match country_folder_opt {
+        let language_folder = match language_folder {
             Some(folder) => folder,
             None => {
                 tracing::warn!(
-                    "Skipping {}: cannot determine country (prefer skip over wrong match)",
+                    "Skipping {}: cannot determine language (prefer skip over wrong match)",
                     video.filename
                 );
                 return Ok(None);
             }
         };
 
-        // Build target paths with country folder layer
-        let country_path = target.join(&country_folder);
-        let show_folder = country_path.join(&folder_name);
+        // Build target paths with language folder layer
+        let language_path = target.join(&language_folder);
+        let show_folder = language_path.join(&folder_name);
         let target_folder = if let Some(ref season_dir) = season_folder {
             show_folder.join(season_dir)
         } else {
@@ -4491,11 +4488,11 @@ impl Planner {
         if self.config.download_posters {
             // For movies: poster in movie folder (which is target_folder)
             // For TV shows: poster in show folder (which is show_folder, not season folder)
-            // Both already include the country_folder layer
+            // Both already include the language_folder layer
             let poster_folder = if season_folder.is_some() {
-                show_folder.clone() // TV shows: use show_folder (includes country_folder)
+                show_folder.clone() // TV shows: use show_folder (includes language_folder)
             } else {
-                target_folder.clone() // Movies: use target_folder (includes country_folder)
+                target_folder.clone() // Movies: use target_folder (includes language_folder)
             };
 
             let poster_url = movie_metadata
