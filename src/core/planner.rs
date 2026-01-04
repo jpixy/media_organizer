@@ -3279,20 +3279,23 @@ impl Planner {
             }
         }
 
-        // Priority 2: English title results
-        if !english_results.is_empty() {
-            let query = english_title.as_deref().unwrap_or("");
-            if let Some(best) = self.select_best_tv_match(query, &english_results) {
-                tracing::info!("TMDB TV found (English match): {}", best.name);
-                return self.get_tvshow_details(client, best.id, parsed).await;
-            }
-        }
-
-        // Priority 3: Chinese title results
+        // Priority 2: Chinese title results (preferred for Asian content)
+        // Chinese title is more specific and less likely to match wrong international content
+        // e.g., "神探伽利略" will correctly match the Japanese show, 
+        // while "Galileo" might match the German show
         if !chinese_results.is_empty() {
             let query = chinese_title.as_deref().unwrap_or("");
             if let Some(best) = self.select_best_tv_match(query, &chinese_results) {
                 tracing::info!("TMDB TV found (Chinese match): {}", best.name);
+                return self.get_tvshow_details(client, best.id, parsed).await;
+            }
+        }
+
+        // Priority 3: English title results (fallback)
+        if !english_results.is_empty() {
+            let query = english_title.as_deref().unwrap_or("");
+            if let Some(best) = self.select_best_tv_match(query, &english_results) {
+                tracing::info!("TMDB TV found (English match): {}", best.name);
                 return self.get_tvshow_details(client, best.id, parsed).await;
             }
         }
