@@ -2,13 +2,76 @@
 
 use crate::models::media::{EpisodeMetadata, MovieMetadata, TvShowMetadata, VideoMetadata};
 
+/// Extract disc/part identifier from filename.
+///
+/// Detects patterns like: cd1, cd2, disc1, disc2, part1, part2, dvd1, dvd2, etc.
+/// Returns the identifier in lowercase format (e.g., "cd1", "part2").
+pub fn extract_disc_identifier(filename: &str) -> Option<String> {
+    let filename_lower = filename.to_lowercase();
+
+    // Patterns to match: cd1, cd2, disc1, disc2, part1, part2, dvd1, dvd2
+    let patterns = [
+        r"[_\s\-\.](cd)(\d+)",
+        r"[_\s\-\.](disc)(\d+)",
+        r"[_\s\-\.](part)(\d+)",
+        r"[_\s\-\.](dvd)(\d+)",
+        r"[_\s\-\.](disk)(\d+)",
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(caps) = re.captures(&filename_lower) {
+                if let (Some(prefix), Some(num)) = (caps.get(1), caps.get(2)) {
+                    return Some(format!("{}{}", prefix.as_str(), num.as_str()));
+                }
+            }
+        }
+    }
+
+    // Also try without separator at the end of filename (before extension)
+    let patterns_end = [
+        r"(cd)(\d+)\.[a-z0-9]+$",
+        r"(disc)(\d+)\.[a-z0-9]+$",
+        r"(part)(\d+)\.[a-z0-9]+$",
+        r"(dvd)(\d+)\.[a-z0-9]+$",
+        r"(disk)(\d+)\.[a-z0-9]+$",
+    ];
+
+    for pattern in &patterns_end {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(caps) = re.captures(&filename_lower) {
+                if let (Some(prefix), Some(num)) = (caps.get(1), caps.get(2)) {
+                    return Some(format!("{}{}", prefix.as_str(), num.as_str()));
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Generate movie filename.
 ///
-/// Format: `[${originalTitle}]-[${title}](${edition})-${year}-${resolution}-${format}-${codec}-${bitDepth}bit-${audioCodec}-${audioChannels}`
+/// Format: `[${originalTitle}]-[${title}](${edition})-${year}-${resolution}-${format}-${codec}-${bitDepth}bit-${audioCodec}-${audioChannels}(-${discId})`
+///
+/// The optional `disc_id` parameter is used for multi-disc movies (cd1, cd2, part1, part2, etc.)
 pub fn generate_movie_filename(
     movie: &MovieMetadata,
     video: &VideoMetadata,
     edition: Option<&str>,
+    extension: &str,
+) -> String {
+    generate_movie_filename_with_disc(movie, video, edition, None, extension)
+}
+
+/// Generate movie filename with optional disc identifier.
+///
+/// Format: `[${originalTitle}]-[${title}](${edition})-${year}-${resolution}-${format}-${codec}-${bitDepth}bit-${audioCodec}-${audioChannels}(-${discId})`
+pub fn generate_movie_filename_with_disc(
+    movie: &MovieMetadata,
+    video: &VideoMetadata,
+    edition: Option<&str>,
+    disc_id: Option<&str>,
     extension: &str,
 ) -> String {
     let mut parts = Vec::new();
@@ -39,6 +102,11 @@ pub fn generate_movie_filename(
     parts.push(format!("-{}bit", video.bit_depth));
     parts.push(format!("-{}", video.audio_codec));
     parts.push(format!("-{}", video.audio_channels));
+
+    // Add disc identifier if present (for multi-disc movies)
+    if let Some(disc) = disc_id {
+        parts.push(format!("-{}", disc));
+    }
 
     format!("{}.{}", parts.join(""), extension)
 }
@@ -133,5 +201,82 @@ mod tests {
         assert!(filename.contains("2160p"));
         assert!(filename.contains("10bit"));
         assert!(filename.ends_with(".mkv"));
+    }
+
+    #[test]
+    fn test_extract_disc_identifier() {
+        // Various disc identifier patterns
+        assert_eq!(
+            extract_disc_identifier("movie-cd1.avi"),
+            Some("cd1".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("movie-cd2.avi"),
+            Some("cd2".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("movie_part1.mkv"),
+            Some("part1".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("movie part2.mkv"),
+            Some("part2".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("movie.disc1.avi"),
+            Some("disc1".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("movie-dvd1.mkv"),
+            Some("dvd1".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("2007-[太阳照常升起]-672x288-480p-XVID-8bit-AC3-6ch cd1.avi"),
+            Some("cd1".to_string())
+        );
+        assert_eq!(
+            extract_disc_identifier("2007-[太阳照常升起]-672x288-480p-XVID-8bit-AC3-6ch cd2.avi"),
+            Some("cd2".to_string())
+        );
+
+        // No disc identifier
+        assert_eq!(extract_disc_identifier("movie.mkv"), None);
+        assert_eq!(extract_disc_identifier("movie-2024.avi"), None);
+    }
+
+    #[test]
+    fn test_generate_movie_filename_with_disc() {
+        let movie = MovieMetadata {
+            original_title: "太阳照常升起".to_string(),
+            title: "太阳照常升起".to_string(),
+            original_language: "zh".to_string(),
+            year: 2007,
+            ..Default::default()
+        };
+
+        let video = VideoMetadata {
+            resolution: "480p".to_string(),
+            format: "DVDRip".to_string(),
+            video_codec: "xvid".to_string(),
+            bit_depth: 8,
+            audio_codec: "ac3".to_string(),
+            audio_channels: "5.1".to_string(),
+        };
+
+        // Without disc id
+        let filename1 = generate_movie_filename(&movie, &video, None, "avi");
+        assert!(!filename1.contains("-cd"));
+
+        // With disc id
+        let filename2 =
+            generate_movie_filename_with_disc(&movie, &video, None, Some("cd1"), "avi");
+        assert!(filename2.contains("-cd1.avi"));
+
+        let filename3 =
+            generate_movie_filename_with_disc(&movie, &video, None, Some("cd2"), "avi");
+        assert!(filename3.contains("-cd2.avi"));
+
+        // Ensure different filenames for different discs
+        assert_ne!(filename2, filename3);
     }
 }

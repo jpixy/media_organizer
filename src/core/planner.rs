@@ -4359,10 +4359,22 @@ impl Planner {
                     .ok_or_else(|| crate::Error::other("Missing movie metadata"))?;
 
                 let folder = gen_folder::generate_movie_folder(metadata, None);
-                let filename = gen_filename::generate_movie_filename(
+
+                // Extract disc identifier from source filename (cd1, cd2, part1, part2, etc.)
+                let disc_id = gen_filename::extract_disc_identifier(&video.filename);
+                if disc_id.is_some() {
+                    tracing::debug!(
+                        "[MULTI-DISC] Detected disc identifier '{}' in: {}",
+                        disc_id.as_ref().unwrap(),
+                        video.filename
+                    );
+                }
+
+                let filename = gen_filename::generate_movie_filename_with_disc(
                     metadata,
                     video_metadata,
                     None,
+                    disc_id.as_deref(),
                     extension,
                 );
                 let nfo = "movie.nfo".to_string();
