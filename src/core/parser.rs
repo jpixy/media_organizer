@@ -874,6 +874,174 @@ pub struct OrganizedMovieFolderInfo {
     pub tmdb_id: u64,
 }
 
+// ============================================================================
+// Smart Metadata Extraction (Order-Independent)
+// ============================================================================
+//
+// This module provides intelligent extraction of metadata from folder/file names
+// without relying on strict format ordering. It identifies elements by their
+// unique characteristics:
+//
+// - IMDB ID: `tt\d{7,9}` (highly unique pattern)
+// - TMDB ID: `tmdb\d+` or number following IMDB ID
+// - Year: standalone 4-digit number in range 1900-2099
+// - Titles: content within square brackets `[...]`
+// ============================================================================
+
+/// Metadata extracted using smart pattern recognition (order-independent).
+#[derive(Debug, Clone, Default)]
+pub struct SmartExtractedMetadata {
+    /// All titles found in square brackets, in order of appearance
+    pub titles: Vec<String>,
+    /// Year (4-digit number in valid range, not part of IDs)
+    pub year: Option<u16>,
+    /// IMDB ID (tt followed by 7-9 digits)
+    pub imdb_id: Option<String>,
+    /// TMDB ID (with or without tmdb prefix)
+    pub tmdb_id: Option<u64>,
+}
+
+impl SmartExtractedMetadata {
+    /// Check if we have minimum required data for movies (at least TMDB ID)
+    pub fn has_movie_essentials(&self) -> bool {
+        self.tmdb_id.is_some()
+    }
+    
+    /// Check if we have minimum required data for TV shows (at least TMDB ID)
+    pub fn has_tvshow_essentials(&self) -> bool {
+        self.tmdb_id.is_some()
+    }
+    
+    /// Get the primary title (first non-empty title, preferring Chinese)
+    pub fn primary_title(&self) -> Option<String> {
+        // If we have 2+ titles, prefer the second one (usually Chinese)
+        if self.titles.len() >= 2 {
+            let second = self.titles.get(1)?.trim();
+            if !second.is_empty() {
+                return Some(second.to_string());
+            }
+        }
+        // Fall back to first title
+        self.titles.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+    
+    /// Get the original title (first title)
+    pub fn original_title(&self) -> Option<String> {
+        self.titles.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+}
+
+/// Extract metadata from a string using smart pattern recognition.
+/// 
+/// This function identifies elements by their unique characteristics,
+/// independent of their order in the input string.
+/// 
+/// # Examples
+/// 
+/// ```
+/// // All these formats will be correctly parsed:
+/// // "2024-[不讨好的勇气]-[不讨好的勇气]-tt29510241-270853"
+/// // "[Title](2024)-tt12345-tmdb67890"
+/// // "[Title][中文](2024)-tt12345-67890"
+/// // "tmdb12345-[Title]-2024"
+/// ```
+pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
+    let mut result = SmartExtractedMetadata::default();
+    
+    // 1. Extract IMDB ID (most unique pattern: tt followed by 7-9 digits)
+    if let Ok(re) = regex::Regex::new(r"tt(\d{7,9})") {
+        if let Some(caps) = re.captures(input) {
+            if let Some(id) = caps.get(1) {
+                result.imdb_id = Some(format!("tt{}", id.as_str()));
+            }
+        }
+    }
+    
+    // 2. Extract TMDB ID
+    // Priority 1: Explicit tmdb prefix
+    if let Ok(re) = regex::Regex::new(r"tmdb(\d+)") {
+        if let Some(caps) = re.captures(input) {
+            if let Some(id) = caps.get(1) {
+                result.tmdb_id = id.as_str().parse().ok();
+            }
+        }
+    }
+    
+    // Priority 2: If no tmdb prefix, look for number after IMDB ID
+    if result.tmdb_id.is_none() && result.imdb_id.is_some() {
+        // Pattern: -tt12345-67890 or -tt12345678-123456
+        if let Ok(re) = regex::Regex::new(r"tt\d{7,9}[^0-9]*(\d{5,8})") {
+            if let Some(caps) = re.captures(input) {
+                if let Some(id) = caps.get(1) {
+                    let num: u64 = id.as_str().parse().unwrap_or(0);
+                    // TMDB IDs are typically 5-8 digits
+                    if (10000..=99999999).contains(&num) {
+                        result.tmdb_id = Some(num);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 3. Extract all titles from square brackets
+    if let Ok(re) = regex::Regex::new(r"\[([^\]]+)\]") {
+        for caps in re.captures_iter(input) {
+            if let Some(title) = caps.get(1) {
+                let t = title.as_str().trim().to_string();
+                if !t.is_empty() {
+                    result.titles.push(t);
+                }
+            }
+        }
+    }
+    
+    // 4. Extract year (4-digit number in valid range, not part of IDs)
+    // First, create a version of input with IDs masked
+    let mut masked = input.to_string();
+    
+    // Mask IMDB ID
+    if let Some(ref imdb) = result.imdb_id {
+        masked = masked.replace(imdb, "XXXXXXXX");
+    }
+    
+    // Mask TMDB ID (both with and without prefix)
+    if let Some(tmdb) = result.tmdb_id {
+        masked = masked.replace(&format!("tmdb{}", tmdb), "XXXXXXXX");
+        masked = masked.replace(&tmdb.to_string(), "XXXXXXXX");
+    }
+    
+    // Now find standalone year
+    if let Ok(re) = regex::Regex::new(r"(?:^|[^0-9])(\d{4})(?:[^0-9]|$)") {
+        for caps in re.captures_iter(&masked) {
+            if let Some(year_match) = caps.get(1) {
+                if let Ok(year) = year_match.as_str().parse::<u16>() {
+                    if (1900..=2099).contains(&year) {
+                        result.year = Some(year);
+                        break; // Take the first valid year
+                    }
+                }
+            }
+        }
+    }
+    
+    // Also try year in parentheses (common format)
+    if result.year.is_none() {
+        if let Ok(re) = regex::Regex::new(r"\((\d{4})\)") {
+            if let Some(caps) = re.captures(input) {
+                if let Some(year_match) = caps.get(1) {
+                    if let Ok(year) = year_match.as_str().parse::<u16>() {
+                        if (1900..=2099).contains(&year) {
+                            result.year = Some(year);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    result
+}
+
 /// Parse an organized movie folder name to extract metadata.
 /// 
 /// Supported formats:
@@ -929,21 +1097,64 @@ pub fn parse_organized_movie_folder(dirname: &str) -> Option<OrganizedMovieFolde
         });
     }
     
+    // ========================================================================
+    // FALLBACK: Smart extraction (order-independent)
+    // ========================================================================
+    // If strict patterns fail, try intelligent extraction based on unique
+    // characteristics of each element (IMDB ID, TMDB ID, year, titles).
+    // This handles non-standard formats like:
+    // - "2024-[Title]-tt12345-67890"
+    // - "[Title]-2024-tt12345-tmdb67890"
+    // ========================================================================
+    
+    let smart = extract_smart_metadata(dirname);
+    
+    // Must have at least TMDB ID and year for movies
+    if let (Some(tmdb_id), Some(year)) = (smart.tmdb_id, smart.year) {
+        tracing::debug!(
+            "[SMART] Movie folder extracted: tmdb={}, year={}, imdb={:?}, titles={:?}",
+            tmdb_id, year, smart.imdb_id, smart.titles
+        );
+        
+        return Some(OrganizedMovieFolderInfo {
+            original_title: smart.original_title(),
+            title: if smart.titles.len() >= 2 { 
+                smart.titles.get(1).cloned() 
+            } else { 
+                None 
+            },
+            year,
+            imdb_id: smart.imdb_id,
+            tmdb_id,
+        });
+    }
+    
     None
 }
 
 /// Check if a folder name matches the organized TV show folder format.
 /// 
-/// Format: `[Title](Year)-ttIMDB-tmdbID` or `[Title](Year)-tmdbID`
+/// This function uses both strict pattern matching and smart extraction
+/// to detect organized folders in various formats.
+/// 
+/// Supported formats (strict):
+/// - `[Title](Year)-ttIMDB-tmdbID`
+/// - `[Title](Year)-tmdbID`
+/// 
+/// Also detected via smart extraction:
+/// - `Year-[Title]-tt...-tmdbID` or similar variations
 pub fn is_organized_tvshow_folder(dirname: &str) -> bool {
-    // Pattern: [Title](Year)-tt...-tmdb... or [Title](Year)-tmdb...
+    // Fast path: strict pattern matching
     let re = regex::Regex::new(r"^\[.+\]\(\d{4}\)-(?:tt\d+)?-?tmdb\d+$").ok();
     if let Some(re) = re {
         if re.is_match(dirname) {
             return true;
         }
     }
-    false
+    
+    // Slow path: smart extraction can identify it
+    let smart = extract_smart_metadata(dirname);
+    smart.has_tvshow_essentials() && !smart.titles.is_empty()
 }
 
 /// Parse an organized TV show folder name to extract metadata.
@@ -1018,6 +1229,36 @@ pub fn parse_organized_tvshow_folder(dirname: &str) -> Option<OrganizedTvShowFol
             year: caps.get(2)?.as_str().parse().ok(),
             imdb_id: None,
             tmdb_id: caps.get(3)?.as_str().parse().ok()?,
+        });
+    }
+    
+    // ========================================================================
+    // FALLBACK: Smart extraction (order-independent)
+    // ========================================================================
+    // If strict patterns fail, try intelligent extraction based on unique
+    // characteristics of each element (IMDB ID, TMDB ID, year, titles).
+    // This handles non-standard formats like:
+    // - "2024-[Title]-[Title]-tt12345-67890"
+    // - "[Title]-2024-tt12345-tmdb67890"
+    // ========================================================================
+    
+    let smart = extract_smart_metadata(dirname);
+    
+    // Must have at least TMDB ID for TV shows
+    if let Some(tmdb_id) = smart.tmdb_id {
+        // Get primary title (prefer second title if available, as it's usually Chinese)
+        let title = smart.primary_title().unwrap_or_else(|| "Unknown".to_string());
+        
+        tracing::debug!(
+            "[SMART] TV folder extracted: tmdb={}, year={:?}, imdb={:?}, title={}",
+            tmdb_id, smart.year, smart.imdb_id, title
+        );
+        
+        return Some(OrganizedTvShowFolderInfo {
+            title,
+            year: smart.year,
+            imdb_id: smart.imdb_id,
+            tmdb_id,
         });
     }
     

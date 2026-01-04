@@ -1446,7 +1446,7 @@ impl Planner {
             .map(|gs| gs.iter().map(|g| g.name.clone()).collect())
             .unwrap_or_default();
         
-        let countries: Vec<String> = details
+        let mut countries: Vec<String> = details
             .production_countries
             .as_ref()
             .map(|cs| cs.iter().map(|c| c.name.clone()).collect())
@@ -1462,6 +1462,10 @@ impl Planner {
         if country_codes.is_empty() {
             if let Some(ref origin) = details.origin_country {
                 country_codes = origin.clone();
+                // Also map country codes to names for consistency
+                countries = origin.iter().map(|code| {
+                    country_code_to_name(code)
+                }).collect();
             }
         }
         
