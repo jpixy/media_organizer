@@ -2192,12 +2192,31 @@ pub fn extract_smart_metadata(input: &str) -> SmartExtractedMetadata {
     }
 
     // 3. Extract all titles from square brackets
+    // Filter out common release group tags that are not actual titles
+    let release_group_tags = [
+        "rartv", "rarbg", "tgx", "trollhd", "troll", "kings", "king", "ctrlhd", "ctrl",
+        "webrip", "webdl", "bluray", "dvdrip", "x264", "x265", "h264", "h265", "hevc",
+        "aac", "ac3", "dts", "dts-hd", "truehd", "atmos", "mkv", "mp4", "avi", "m4v",
+        "1080p", "720p", "2160p", "4k", "uhd", "hd", "sd", "sdtv", "hdtv", "web",
+        "proper", "repack", "rerip", "internal", "limited", "extended", "director's cut",
+        "dc", "remux", "bdremux", "bdrip", "brrip", "dvdscr", "scr", "ts", "tc", "cam",
+        "hdcam", "hdts", "dvdr", "iso", "nfo", "sample", "sub", "subs", "multi", "multi5",
+        "multi10", "eng", "chs", "cht", "zh", "cn", "jp", "ja", "ko", "kr", "en", "es",
+        "fr", "de", "it", "ru", "pt", "br", "mx", "latino", "dublado", "dubbed", "dual",
+        "audio", "dual-audio", "dd51", "ddp51", "eac3", "flac", "pcm", "lpcm",
+        "game", "ps3", "xbox", "wii", "pc", "mac", "linux", "android", "ios",
+        "season", "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08", "s09", "s10",
+        "episode", "e01", "e02", "e03", "e04", "e05", "e06", "e07", "e08", "e09", "e10",
+        "2006", "2007", "2008", "2009", "2010", "2011", "2012", "2013", "2014", "2015",
+        "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025",
+    ];
+    
     if let Ok(re) = regex::Regex::new(r"\[([^\]]+)\]") {
         for caps in re.captures_iter(input) {
             if let Some(title) = caps.get(1) {
-                let t = title.as_str().trim().to_string();
-                if !t.is_empty() {
-                    result.titles.push(t);
+                let t = title.as_str().trim().to_lowercase();
+                if !t.is_empty() && !release_group_tags.contains(&t.as_str()) {
+                    result.titles.push(title.as_str().trim().to_string());
                 }
             }
         }

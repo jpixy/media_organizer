@@ -2389,7 +2389,7 @@ impl Planner {
                             e
                         );
                         // Fall back to search
-                        self.search_tv_show(tmdb, &tvshow_info.title, tvshow_info.year, tvshow_info.original_title.as_deref()).await?
+                        self.search_tv_show(tmdb, &tvshow_info.title, tvshow_info.year, tvshow_info.original_title.as_deref(), tvshow_info.imdb_id.as_deref()).await?
                     }
                 }
             } else {
@@ -2399,7 +2399,7 @@ impl Planner {
                     tvshow_info.title,
                     tvshow_info.year
                 );
-                self.search_tv_show(tmdb, &tvshow_info.title, tvshow_info.year, tvshow_info.original_title.as_deref()).await?
+                self.search_tv_show(tmdb, &tvshow_info.title, tvshow_info.year, tvshow_info.original_title.as_deref(), tvshow_info.imdb_id.as_deref()).await?
             }
         } else {
             // No TV Show folder info - this shouldn't happen in normal flow
@@ -2538,81 +2538,171 @@ impl Planner {
         Ok(Some((plan_item, Some(show_meta))))
     }
 
-    /// Search TV show by title with year tolerance.
+    /// Search TV show with optimized priority strategy.
+    /// 
+    /// Priority order:
+    /// 1. IMDB ID (most reliable)
+    /// 2. Original title (usually English, more reliable for TMDB)
+    /// 3. Primary title (usually Chinese, fallback)
     async fn search_tv_show(
         &self,
         tmdb: &TmdbClient,
         title: &str,
         year: Option<u16>,
         original_title: Option<&str>,
+        imdb_id: Option<&str>,
     ) -> Result<TvSeriesMetadata> {
         tracing::info!(
-            "[SEARCH-TV] Searching for '{}' (year={:?}, original={:?})",
+            "[SEARCH-TV] Searching for '{}' (year={:?}, original={:?}, imdb={:?})",
             title,
             year,
-            original_title
+            original_title,
+            imdb_id
         );
         
-        // Try with original year
-        let search_results = tmdb.search_tv(title, year).await.map_err(|e| crate::error::Error::Other(e.to_string()))?;
-        
-        if let Some(first_result) = search_results.first() {
-            let show_tmdb_id = first_result.id;
-            tracing::info!(
-                "[SEARCH-TV] Found TV show via search: {} (tmdb{})",
-                first_result.name,
-                show_tmdb_id
-            );
+        // Helper function to search by title and return result
+        async fn do_title_search(
+            this: &Planner,
+            tmdb: &TmdbClient,
+            search_title: &str,
+            search_year: Option<u16>,
+            fallback_imdb_id: Option<&str>,
+            fallback_original_title: Option<&str>,
+        ) -> Result<Option<TvSeriesMetadata>> {
+            tracing::info!("[SEARCH-TV] Searching TMDB for '{}' (year={:?})", search_title, search_year);
             
-            return self.get_tv_show_with_fallback(
-                tmdb,
-                show_tmdb_id,
-                None,
-                title,
-                year,
-                original_title,
-            ).await.map_err(|e| crate::error::Error::Other(e));
-        }
-        
-        // Try with year-1 if original year failed
-        if let Some(y) = year {
-            if y > 0 {
-                tracing::info!("[SEARCH-TV] Trying with year-1: {}", y - 1);
-                let search_results = tmdb.search_tv(title, Some(y - 1)).await.map_err(|e| crate::error::Error::Other(e.to_string()))?;
-                
-                if let Some(first_result) = search_results.first() {
-                    let show_tmdb_id = first_result.id;
-                    return self.get_tv_show_with_fallback(
-                        tmdb,
-                        show_tmdb_id,
-                        None,
-                        title,
-                        Some(y - 1),
-                        original_title,
-                    ).await.map_err(|e| crate::error::Error::Other(e));
+            let search_results = match tmdb.search_tv(search_title, search_year).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("[SEARCH-TV] Search failed: {}", e);
+                    return Ok(None);
                 }
-            }
-            
-            // Try with year+1
-            tracing::info!("[SEARCH-TV] Trying with year+1: {}", y + 1);
-            let search_results = tmdb.search_tv(title, Some(y + 1)).await.map_err(|e| crate::error::Error::Other(e.to_string()))?;
+            };
             
             if let Some(first_result) = search_results.first() {
                 let show_tmdb_id = first_result.id;
-                return self.get_tv_show_with_fallback(
+                tracing::info!(
+                    "[SEARCH-TV] Found TV show via search: {} (tmdb{})",
+                    first_result.name,
+                    show_tmdb_id
+                );
+                
+                match this.get_tv_show_with_fallback(
                     tmdb,
                     show_tmdb_id,
-                    None,
-                    title,
-                    Some(y + 1),
-                    original_title,
-                ).await.map_err(|e| crate::error::Error::Other(e));
+                    fallback_imdb_id,
+                    search_title,
+                    search_year,
+                    fallback_original_title,
+                ).await {
+                    Ok(meta) => return Ok(Some(meta)),
+                    Err(e) => {
+                        tracing::warn!("[SEARCH-TV] Failed to get TV show details: {}", e);
+                        return Ok(None);
+                    }
+                }
+            }
+            
+            Ok(None)
+        }
+        
+        // ============================================
+        // Step 1: PRIORITY - Use IMDB ID directly
+        // ============================================
+        if let Some(imdb) = imdb_id {
+            tracing::info!("[SEARCH-TV] Priority 1: Using IMDB ID {}", imdb);
+            match tmdb.find_tv_by_imdb_id(imdb).await {
+                Ok(Some(tmdb_id)) => {
+                    tracing::info!("[SEARCH-TV] IMDB {} -> TMDB {}", imdb, tmdb_id);
+                    match self.get_tv_show_with_fallback(
+                        tmdb,
+                        tmdb_id,
+                        Some(imdb),
+                        title,
+                        year,
+                        original_title,
+                    ).await {
+                        Ok(meta) => {
+                            tracing::info!("[SEARCH-TV] Success via IMDB ID: {} (tmdb{})", meta.name, meta.tmdb_id);
+                            return Ok(meta);
+                        }
+                        Err(e) => {
+                            tracing::warn!("[SEARCH-TV] Failed to get details via IMDB: {}", e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!("[SEARCH-TV] No TMDB match for IMDB ID: {}", imdb);
+                }
+                Err(e) => {
+                    tracing::warn!("[SEARCH-TV] IMDB lookup failed: {}", e);
+                }
             }
         }
         
+        // ============================================
+        // Step 2: SECOND PRIORITY - Search by original title (English)
+        // ============================================
+        if let Some(orig_title) = original_title {
+            tracing::info!("[SEARCH-TV] Priority 2: Searching by original title '{}'", orig_title);
+            
+            // Try original title with original year
+            if let Some(result) = do_title_search(self, tmdb, orig_title, year, imdb_id, None).await? {
+                return Ok(result);
+            }
+            
+            // Try original title with year-1
+            if let Some(y) = year {
+                if y > 0 {
+                    if let Some(result) = do_title_search(self, tmdb, orig_title, Some(y - 1), imdb_id, None).await? {
+                        return Ok(result);
+                    }
+                }
+                
+                // Try original title with year+1
+                if let Some(result) = do_title_search(self, tmdb, orig_title, Some(y + 1), imdb_id, None).await? {
+                    return Ok(result);
+                }
+            }
+            
+            // Try original title without year
+            if let Some(result) = do_title_search(self, tmdb, orig_title, None, imdb_id, None).await? {
+                return Ok(result);
+            }
+        }
+        
+        // ============================================
+        // Step 3: FALLBACK - Search by primary title (Chinese)
+        // ============================================
+        tracing::info!("[SEARCH-TV] Priority 3: Searching by primary title '{}'", title);
+        
+        // Try primary title with original year
+        if let Some(result) = do_title_search(self, tmdb, title, year, imdb_id, original_title).await? {
+            return Ok(result);
+        }
+        
+        // Try primary title with year-1
+        if let Some(y) = year {
+            if y > 0 {
+                if let Some(result) = do_title_search(self, tmdb, title, Some(y - 1), imdb_id, original_title).await? {
+                    return Ok(result);
+                }
+            }
+            
+            // Try primary title with year+1
+            if let Some(result) = do_title_search(self, tmdb, title, Some(y + 1), imdb_id, original_title).await? {
+                return Ok(result);
+            }
+        }
+        
+        // Try primary title without year
+        if let Some(result) = do_title_search(self, tmdb, title, None, imdb_id, original_title).await? {
+            return Ok(result);
+        }
+        
         Err(crate::error::Error::Other(format!(
-            "No TV show found for title: {}",
-            title
+            "No TV show found for title: {} (original: {:?}, imdb: {:?})",
+            title, original_title, imdb_id
         )))
     }
 
@@ -2657,7 +2747,7 @@ impl Planner {
                     },
                     None => {
                         // No TMDB ID, search by title
-                        match self.search_tv_show(self.tmdb_client.as_ref().unwrap(), &folder_info.title, folder_info.year, folder_info.original_title.as_deref()).await {
+                        match self.search_tv_show(self.tmdb_client.as_ref().unwrap(), &folder_info.title, folder_info.year, folder_info.original_title.as_deref(), folder_info.imdb_id.as_deref()).await {
                             Ok(meta) => meta,
                             Err(e) => {
                                 tracing::warn!("Failed to search TV series '{}': {}", folder_info.title, e);
@@ -2799,7 +2889,7 @@ impl Planner {
         tracing::info!("[FIND-CONTEXT] Called with start_dir: {:?}", start_dir);
         
         let mut season_number: Option<u16> = None;
-        let mut tvshow_info: Option<parser::OrganizedTvSeriesFolderInfo> = None;
+        let mut candidates: Vec<parser::OrganizedTvSeriesFolderInfo> = Vec::new();
         
         let mut current = Some(start_dir);
 
@@ -2823,12 +2913,11 @@ impl Planner {
                         // This is TV Show level folder - extract title and IDs
                         // But first check if the title looks valid (not just season number)
                         if !info.title.starts_with("S") || info.title.len() > 3 {
-                            tvshow_info = Some(info.clone());
                             tracing::info!(
                                 "[FIND-CONTEXT] Found TV Show folder '{}': title={}, tmdb={:?}, imdb={:?}",
                                 name, info.title, info.tmdb_id, info.imdb_id
                             );
-                            break; // Found TV Show level, no need to continue
+                            candidates.push(info);
                         }
                     } else {
                         // Try to parse as non-standard TV Show folder
@@ -2840,28 +2929,48 @@ impl Planner {
                         let has_meaningful_title = has_cjk || name.len() > 5;
                         
                         if has_meaningful_title {
-                            if let Some(title) = parser::extract_title_from_dirname(name) {
-                                let original_title = parser::extract_english_title_from_dirname(name);
-                                tracing::info!(
-                                    "[FIND-CONTEXT] Found non-standard TV Show folder '{}': title={}",
-                                    name, title
-                                );
-                                tvshow_info = Some(parser::OrganizedTvSeriesFolderInfo {
-                                    title,
-                                    original_title,
-                                    year: parser::extract_year_from_dirname(name),
-                                    imdb_id: None,
-                                    tmdb_id: None,
-                                    season_imdb_id: None,
+                            let title = parser::extract_title_from_dirname(name)
+                                .or_else(|| parser::extract_english_title_from_dirname(name))
+                                .unwrap_or_else(|| {
+                                    let cleaned = name.split(|c| c == '(' || c == '[')
+                                        .next()
+                                        .unwrap_or(name)
+                                        .trim()
+                                        .to_string();
+                                    cleaned
                                 });
-                                break;
-                            }
+                            
+                            let original_title = if has_cjk {
+                                parser::extract_english_title_from_dirname(name)
+                            } else {
+                                None
+                            };
+                            
+                            let (tmdb_id, imdb_id) = metadata::extract_ids_from_path(dir);
+                            tracing::info!(
+                                "[FIND-CONTEXT] Found non-standard TV Show folder '{}': title={}, imdb={:?}, tmdb={:?}",
+                                name, title, imdb_id, tmdb_id
+                            );
+                            candidates.push(parser::OrganizedTvSeriesFolderInfo {
+                                title,
+                                original_title,
+                                year: parser::extract_year_from_dirname(name),
+                                imdb_id,
+                                tmdb_id,
+                                season_imdb_id: None,
+                            });
                         }
                     }
                 }
             }
             current = dir.parent();
         }
+
+        // Priority: Select candidate with IMDB ID or TMDB ID (most reliable)
+        let tvshow_info = candidates.iter()
+            .find(|c| c.imdb_id.is_some() || c.tmdb_id.is_some())
+            .cloned()
+            .or_else(|| candidates.into_iter().next());
 
         // Return context if we found at least TV Show info or Season number
         if tvshow_info.is_some() || season_number.is_some() {
