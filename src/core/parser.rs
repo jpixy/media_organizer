@@ -860,6 +860,29 @@ mod tests {
         assert_eq!(extract_episode_from_filename("Avatar.2009.1080p.mkv"), (None, None));
     }
 
+    #[test]
+    fn test_extract_episode_bracketed_number() {
+        // Single bracketed number
+        assert_eq!(extract_episode_from_filename("[03].mp4"), (Some(1), Some(3)));
+        assert_eq!(extract_episode_from_filename("[01].mp4"), (Some(1), Some(1)));
+        assert_eq!(extract_episode_from_filename("[10].mp4"), (Some(1), Some(10)));
+
+        // Multiple brackets (Chinese release format)
+        assert_eq!(extract_episode_from_filename("[Cyberpunk - Edgerunners][03][WEBRip][AVC_AAC][1080P][CHS][MP4].mp4"), (Some(1), Some(3)));
+        assert_eq!(extract_episode_from_filename("[Title][05][WEBRip][1080P][CHS].mkv"), (Some(1), Some(5)));
+        assert_eq!(extract_episode_from_filename("[Show Name][01][720P][Eng].mp4"), (Some(1), Some(1)));
+
+        // Should NOT match years or resolutions
+        assert_eq!(extract_episode_from_filename("[2022].mp4"), (None, None));
+        assert_eq!(extract_episode_from_filename("[1080P].mp4"), (None, None));
+        assert_eq!(extract_episode_from_filename("[720P].mp4"), (None, None));
+
+        // [SP] is handled by regex_match_special, returns Season 0 Episode 1
+        assert_eq!(extract_episode_from_filename("[SP].mp4"), (Some(0), Some(1)));
+        // [Special] is not matched by any pattern (no numbers)
+        assert_eq!(extract_episode_from_filename("[Special].mp4"), (None, None));
+    }
+
     // ========================================================================
     // extract_season_from_dirname 测试
     // ========================================================================
@@ -1632,6 +1655,12 @@ pub fn extract_episode_from_filename(filename: &str) -> (Option<u16>, Option<u16
         return (Some(1), Some(ep)); // Default to season 1
     }
 
+    // Pattern 7: [03], [05] - bracketed number format (common in Chinese releases)
+    // Handle "[Cyberpunk - Edgerunners][03][WEBRip][1080P][CHS].mp4"
+    if let Some(ep) = regex_match_bracketed_number(&name) {
+        return (Some(1), Some(ep)); // Default to season 1
+    }
+
     (None, None)
 }
 
@@ -1834,6 +1863,26 @@ fn regex_match_trailing_episode(s: &str) -> Option<u16> {
         }
     }
 
+    None
+}
+
+/// Match bracketed episode number format.
+///
+/// Handles formats like:
+/// - "[03]" → episode 3
+/// - "[Cyberpunk - Edgerunners][03][WEBRip][1080P][CHS]" → episode 3
+/// - "[03][WEBRip][1080P]" → episode 3
+/// - "[SP]" → None (special marker, handled by regex_match_special)
+/// - "[1080P]" → None (resolution, not episode)
+fn regex_match_bracketed_number(s: &str) -> Option<u16> {
+    let re = regex::Regex::new(r"\[(\d{1,3})\]").ok()?;
+    for caps in re.captures_iter(s) {
+        if let Some(num) = caps.get(1).and_then(|m| m.as_str().parse::<u16>().ok()) {
+            if (1..=999).contains(&num) && !(1900..=2099).contains(&(num as u32)) {
+                return Some(num);
+            }
+        }
+    }
     None
 }
 
