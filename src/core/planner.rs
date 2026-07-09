@@ -3394,26 +3394,45 @@ impl Planner {
             name.clone()
         };
         
+        let origin_country = details.origin_country.as_ref()
+            .and_then(|countries| countries.first())
+            .map(|c| c.as_str());
+
+        let is_chinese_region = matches!(origin_country, Some("CN") | Some("HK") | Some("TW") | Some("MO") | Some("SG"));
+
         // Use fallback_title for original_name if TMDB original_name is empty or contains Chinese
-        // This ensures we have a valid original_name for folder generation
-        // Priority: original_name (if English only) > name (if English only) > fallback_title (if English only) > fallback_en_title > "Unknown"
-        // IMPORTANT: original_name should always be English (the original title)
-        let original_name_with_fallback: String = if original_name.is_empty() || chinese::contains_chinese(&original_name) {
-            // TMDB original_name is empty or contains Chinese, try to find English title
-            if !chinese::contains_chinese(&name) && !name.is_empty() {
-                // name is English, use it
-                name.clone()
-            } else if fallback_title.as_ref().map_or(false, |t| !chinese::contains_chinese(t)) {
-                // fallback_title is English, use it
-                fallback_title.unwrap().to_string()
-            } else if fallback_en_title.is_some() {
-                // fallback_en_title is English (extracted from dirname), use it
-                fallback_en_title.unwrap()
+        // Priority for Chinese regions (CN/HK/TW/MO/SG):
+        //   original_name (if Chinese) > name (Chinese)
+        // Priority for other regions:
+        //   original_name (if English) > name (if English) > fallback_title (if English) > fallback_en_title > "Unknown"
+        let original_name_with_fallback: String = if original_name.is_empty() || original_name.eq_ignore_ascii_case("unknown") {
+            if is_chinese_region {
+                // Chinese regions: use name directly (preserve original Chinese title)
+                if !name.is_empty() {
+                    name.clone()
+                } else {
+                    fallback_title.map(|t| t.to_string()).unwrap_or_else(|| "Unknown".to_string())
+                }
             } else {
-                // All are Chinese or empty, use a placeholder
-                // This should not happen for English shows, but provides a fallback
-                fallback_title.map(|t| t.to_string()).unwrap_or_else(|| "Unknown".to_string())
+                // Other regions: try to find English title
+                if !chinese::contains_chinese(&name) && !name.is_empty() {
+                    name.clone()
+                } else if fallback_title.as_ref().map_or(false, |t| !chinese::contains_chinese(t)) {
+                    fallback_title.unwrap().to_string()
+                } else if fallback_en_title.is_some() {
+                    fallback_en_title.unwrap()
+                } else {
+                    // No English title found, use "Unknown" but will be hidden in folder name
+                    tracing::warn!(
+                        "[TMDB] No English original_name found for '{}', using 'Unknown' (will be hidden in folder name)",
+                        name_with_fallback
+                    );
+                    "Unknown".to_string()
+                }
             }
+        } else if chinese::contains_chinese(&original_name) {
+            // TMDB original_name is already Chinese, use it directly
+            original_name.clone()
         } else {
             original_name.clone()
         };

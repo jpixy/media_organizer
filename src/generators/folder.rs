@@ -124,10 +124,12 @@ pub fn generate_tv_series_folder(metadata: &TvSeriesMetadata) -> String {
     // Handle title deduplication
     // Always show both titles when they differ (for proper identification)
     // Only deduplicate when titles are actually the same (e.g., English-only content)
-    let titles_same = normalize_title(&metadata.original_name) == normalize_title(&metadata.name);
+    // Skip comparison if original_name is "Unknown" (will be hidden in folder name)
+    let is_unknown = metadata.original_name.is_empty() || metadata.original_name.eq_ignore_ascii_case("unknown");
+    let titles_same = is_unknown || (normalize_title(&metadata.original_name) == normalize_title(&metadata.name));
 
     if titles_same {
-        // Titles are the same (e.g., English-only), show only one
+        // Titles are the same or original_name is "Unknown", show only one
         parts.push(format!("[{}]", sanitize_filename(&metadata.name)));
     } else {
         // Titles are different - show both (localized first, then original)
@@ -178,7 +180,9 @@ pub fn generate_season_folder(
     let has_year = !year.is_empty();
     
     // Check if show_name and original_name are different
-    let names_different = normalize_title(show_name) != normalize_title(original_name);
+    // Skip comparison if original_name is "Unknown" (will be hidden in folder name)
+    let is_unknown = original_name.is_empty() || original_name.eq_ignore_ascii_case("unknown");
+    let names_different = !is_unknown && (normalize_title(show_name) != normalize_title(original_name));
     
     // Add show names
     if names_different {
@@ -516,6 +520,27 @@ mod tests {
     }
 
     #[test]
+    fn test_movie_folder_with_unknown_original_title() {
+        // Test movie folder when original_title is "Unknown" - should NOT show double title
+        let metadata = MovieMetadata {
+            tmdb_id: 12345,
+            imdb_id: Some("tt1234567".to_string()),
+            original_title: "Unknown".to_string(),
+            title: "第9节课".to_string(),
+            original_language: "zh".to_string(),
+            year: 2022,
+            ..Default::default()
+        };
+        
+        let folder = generate_movie_folder(&metadata, None);
+        // Should NOT contain [Unknown]
+        assert!(!folder.contains("[Unknown]"));
+        // Should only show Chinese title once
+        assert!(folder.contains("[第9节课]"));
+        assert_eq!(folder.matches("[第9节课]").count(), 1);
+    }
+
+    #[test]
     fn test_generate_season_folder_basic() {
         // Test basic season folder generation with air_date
         // Format: [S04][Season 04]-[A][爱死亡与机器人][Love, Death & Robots](2019)-tt9561862-tmdb450504
@@ -542,6 +567,26 @@ mod tests {
         // Test season folder with Chinese name and air_date - season name is always in English format
         let folder = generate_season_folder(2, "第 2 季", "M", "漫长的季节", "漫长的季节", Some("tt123456"), 191339, Some("2023-04-22"));
         assert_eq!(folder, "[S02][Season 02]-[M][漫长的季节](2023)-tt123456-tmdb191339");
+    }
+
+    #[test]
+    fn test_generate_season_folder_with_unknown_original_name() {
+        // Test season folder when original_name is "Unknown" - should NOT show double title
+        let folder = generate_season_folder(1, "Season 01", "D", "第9节课", "Unknown", Some("tt23023988"), 293205, Some("2022-01-01"));
+        // Should NOT contain [Unknown]
+        assert!(!folder.contains("[Unknown]"));
+        // Should only show Chinese title once
+        assert_eq!(folder, "[S01][Season 01]-[D][第9节课](2022)-tt23023988-tmdb293205");
+    }
+
+    #[test]
+    fn test_generate_season_folder_chinese_simplified_vs_traditional() {
+        // Test season folder with simplified Chinese name and traditional Chinese original_name
+        // Should show both since they are different characters
+        let folder = generate_season_folder(1, "Season 01", "D", "第9节课", "第9節課", Some("tt123456"), 123456, Some("2022-01-01"));
+        // Should contain both simplified and traditional
+        assert!(folder.contains("[第9节课]"));
+        assert!(folder.contains("[第9節課]"));
     }
 
     #[test]
