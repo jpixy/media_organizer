@@ -2972,13 +2972,19 @@ impl Planner {
             .cloned()
             .or_else(|| candidates.into_iter().next());
 
-        // Return context if we found at least TV Show info or Season number
-        if tvshow_info.is_some() || season_number.is_some() {
+        // Return context only if we found BOTH TV Show info AND Season number
+        // This ensures that movies in subdirectories under a TV Show folder are not incorrectly treated as TV episodes
+        if tvshow_info.is_some() && season_number.is_some() {
             Some(parser::TvSeriesFolderContext {
                 tvshow_info,
                 season_number,
             })
         } else {
+            tracing::info!(
+                "[FIND-CONTEXT] Returning None: tvshow_info={:?}, season_number={:?}",
+                tvshow_info.is_some(),
+                season_number
+            );
             None
         }
     }
@@ -8467,5 +8473,46 @@ mod tests {
         // With >3 results, should use scoring and find exact match
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, 11111, "Should find exact match with scoring");
+    }
+
+    #[test]
+    fn test_find_tv_series_folder_context_with_season() {
+        // Test case: TV episode in season folder should return context
+        let planner = Planner::new().unwrap();
+        
+        // TV episode path: /tv/浴血黑帮/S01/episode.mp4
+        let episode_dir = Path::new("/tv/浴血黑帮/S01");
+        let context = planner.find_tv_series_folder_context(episode_dir);
+        
+        assert!(context.is_some(), "TV episode in season folder should find context");
+        assert!(context.as_ref().unwrap().tvshow_info.is_some(), "Should find TV show info");
+        assert_eq!(context.as_ref().unwrap().season_number, Some(1), "Should find season number 1");
+    }
+
+    #[test]
+    fn test_find_tv_series_folder_context_without_season() {
+        // Test case: Movie in subdirectory under TV Show folder should NOT return context
+        // This is the bug fix: movies like "浴血黑帮.不朽传奇 (2026)" should not be treated as TV episodes
+        let planner = Planner::new().unwrap();
+        
+        // Movie path: /tv/浴血黑帮/浴血黑帮.不朽传奇 (2026)/movie.mkv
+        // This folder doesn't contain season info (no S01, Season 1, etc.)
+        let movie_dir = Path::new("/tv/浴血黑帮/浴血黑帮.不朽传奇 (2026)");
+        let context = planner.find_tv_series_folder_context(movie_dir);
+        
+        assert!(context.is_none(), "Movie in non-season subdirectory should NOT find context");
+    }
+
+    #[test]
+    fn test_find_tv_series_folder_context_directly_under_show() {
+        // Test case: Video directly under TV Show folder (not in season subfolder)
+        // should NOT return context
+        let planner = Planner::new().unwrap();
+        
+        // Path: /tv/浴血黑帮/video.mp4 (no season folder)
+        let video_dir = Path::new("/tv/浴血黑帮");
+        let context = planner.find_tv_series_folder_context(video_dir);
+        
+        assert!(context.is_none(), "Video directly under TV Show folder without season should NOT find context");
     }
 }

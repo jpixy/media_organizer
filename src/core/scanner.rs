@@ -264,6 +264,40 @@ pub fn scan_directory(path: &Path) -> Result<ScanResult> {
                             tracing::warn!("Failed to read video file {:?}: {}", entry_path, e);
                         }
                     }
+                } else {
+                    // Check if file looks like a video but has non-standard extension
+                    // This catches files like "movie.mp4" without the dot, or with typos
+                    let filename = entry_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    let lower_name = filename.to_lowercase();
+                    let looks_like_video = VIDEO_EXTENSIONS.iter()
+                        .any(|video_ext| lower_name.ends_with(video_ext));
+                    
+                    if looks_like_video {
+                        tracing::warn!(
+                            "Skipping file with suspicious extension '{}': {}. This file will NOT be processed. Check if the filename needs a dot before the extension.",
+                            ext.to_string_lossy(),
+                            entry_path.display()
+                        );
+                    }
+                }
+            } else {
+                // File has no extension at all - check if it looks like it should be a video
+                let filename = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let lower_name = filename.to_lowercase();
+                let looks_like_video = VIDEO_EXTENSIONS.iter()
+                    .any(|video_ext| lower_name.ends_with(video_ext));
+                
+                if looks_like_video {
+                    tracing::warn!(
+                        "Skipping file without valid extension: {}. This file will NOT be processed. Check if the filename needs a dot before the extension (e.g., 'movie.mp4' not 'moviemp4').",
+                        entry_path.display()
+                    );
                 }
             }
         }
@@ -336,6 +370,41 @@ mod tests {
         assert!(is_sample_filename("movie-sample.mkv"));
         assert!(!is_sample_filename("movie.mkv"));
         assert!(!is_sample_filename("sampler.mkv")); // Don't match "sampler"
+    }
+
+    #[test]
+    fn test_file_without_dot_before_extension() {
+        // Test that files like "moviemp4" (missing dot before extension) are not treated as videos
+        // This simulates the S06E03 case where the file was named "Peaky.Blinders.S06E03.mp4" without the dot
+        
+        // Test the filename check logic
+        let test_cases = vec![
+            ("movie.mp4", true),   // Valid extension
+            ("movie.mkv", true),   // Valid extension
+            ("moviemp4", false),   // Missing dot - should NOT be recognized
+            ("moviemkv", false),   // Missing dot - should NOT be recognized
+            ("movie", false),      // No extension at all
+            ("movie.txt", false),  // Wrong extension
+        ];
+        
+        for (filename, should_be_video) in test_cases {
+            let path = Path::new(filename);
+            let has_extension = path.extension().is_some();
+            let is_video = if let Some(ext) = path.extension() {
+                is_video_extension(&ext.to_string_lossy())
+            } else {
+                false
+            };
+            
+            if should_be_video {
+                assert!(has_extension, "File '{}' should have extension", filename);
+                assert!(is_video, "File '{}' should be recognized as video", filename);
+            } else {
+                if !filename.contains('.') {
+                    assert!(!has_extension, "File '{}' should NOT have extension", filename);
+                }
+            }
+        }
     }
 
     // Integration tests for scan_directory() moved to tests/scanner_tests.rs
