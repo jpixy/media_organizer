@@ -1301,7 +1301,7 @@ impl Planner {
 
             // Try TMDB search with local parsed result
             let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
-            let (show, _) = self
+            let (show, _, _) = self
                 .query_tmdb_tv_series_with_folder(&parsed, folder_name.as_deref())
                 .await?;
 
@@ -1320,7 +1320,7 @@ impl Planner {
                 }
 
                 // Try TMDB search with AI parsed result
-                let (ai_show, _) = self
+                let (ai_show, _, _) = self
                     .query_tmdb_tv_series_with_folder(&ai_parsed, folder_name.as_deref())
                     .await?;
 
@@ -1346,7 +1346,7 @@ impl Planner {
                         confidence: 0.6,
                         raw_response: Some("folder_fallback".to_string()),
                     };
-                    let (show, _) = self
+                    let (show, _, _) = self
                         .query_tmdb_tv_series_with_folder(&folder_parsed, Some(&folder_title))
                         .await?;
                     if show.is_some() {
@@ -1448,7 +1448,7 @@ impl Planner {
                 }
                 
                 let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
-                let (show, _) = self
+                let (show, _, _) = self
                     .query_tmdb_tv_series_with_folder(&tv_parsed, folder_name.as_deref())
                     .await?;
                 
@@ -1467,7 +1467,7 @@ impl Planner {
                     }
 
                     // Try TMDB search with AI parsed result
-                    let (ai_show, _) = self
+                    let (ai_show, _, _) = self
                         .query_tmdb_tv_series_with_folder(&ai_parsed, folder_name.as_deref())
                         .await?;
                     if ai_show.is_some() {
@@ -1492,7 +1492,7 @@ impl Planner {
                             confidence: 0.6,
                             raw_response: Some("folder_fallback".to_string()),
                         };
-                        let (show, _) = self
+                        let (show, _, _) = self
                             .query_tmdb_tv_series_with_folder(&folder_parsed, Some(&folder_title))
                             .await?;
                         if show.is_some() {
@@ -1552,7 +1552,7 @@ impl Planner {
                 } else {
                     // First video: get show info and cache season
                     let folder_name = self.get_meaningful_folder_name(&video.parent_dir);
-                    let (show, _) = self
+                    let (show, _, season_hint) = self
                         .query_tmdb_tv_series_with_folder(&parsed, folder_name.as_deref())
                         .await?;
                     if show.is_none() {
@@ -1575,7 +1575,7 @@ impl Planner {
                             }
                         }
                         (
-                            s.or(parsed.season).unwrap_or(1),
+                            s.or(season_hint).or(parsed.season).unwrap_or(1),
                             e.or(parsed.episode).unwrap_or(1),
                         )
                     };
@@ -1745,7 +1745,7 @@ impl Planner {
                             raw_response: Some("organized_format".to_string()),
                         };
 
-                        let (show, _) = self
+                        let (show, _, _) = self
                             .query_tmdb_tv_series_with_folder(&parsed_search, parent_folder.as_deref())
                             .await?;
                         if show.is_none() {
@@ -1772,7 +1772,7 @@ impl Planner {
                         raw_response: Some("organized_format".to_string()),
                     };
 
-                    let (show, _) = self
+                    let (show, _, _) = self
                         .query_tmdb_tv_series_with_folder(&parsed_search, parent_folder.as_deref())
                         .await?;
                     if show.is_none() {
@@ -5350,7 +5350,7 @@ impl Planner {
     async fn query_tmdb_tv_series(
         &self,
         parsed: &ParsedFilename,
-    ) -> Result<(Option<TvSeriesMetadata>, Option<EpisodeMetadata>)> {
+    ) -> Result<(Option<TvSeriesMetadata>, Option<EpisodeMetadata>, Option<u16>)> {
         self.query_tmdb_tv_series_with_folder(parsed, None).await
     }
 
@@ -5359,10 +5359,10 @@ impl Planner {
         &self,
         parsed: &ParsedFilename,
         folder_name: Option<&str>,
-    ) -> Result<(Option<TvSeriesMetadata>, Option<EpisodeMetadata>)> {
+    ) -> Result<(Option<TvSeriesMetadata>, Option<EpisodeMetadata>, Option<u16>)> {
         let client = match &self.tmdb_client {
             Some(c) => c,
-            None => return Ok((None, None)),
+            None => return Ok((None, None, None)),
         };
 
         // Helper to clean up search query
@@ -5418,10 +5418,11 @@ impl Planner {
 
                 tracing::debug!("[FOLDER] Cleaned folder name: '{}'", cleaned);
 
-                // Extract Chinese portion (consecutive CJK characters and punctuation)
+                // Extract Chinese portion (consecutive CJK characters, punctuation, and trailing digits)
                 // Include comma (,) for cases like "爱，死亡和机器人"
+                // Include trailing digits for cases like "大江大河2" (sequel number without space)
                 let chinese_re =
-                    regex::Regex::new(r"[\u4e00-\u9fff\u3000-\u303f\u00b7\uff01-\uff5e,，]+").unwrap();
+                    regex::Regex::new(r"[\u4e00-\u9fff\u3000-\u303f\u00b7\uff01-\uff5e,，]+(?:\d+)?" ).unwrap();
                 let folder_chinese: String = chinese_re
                     .find_iter(&cleaned)
                     .map(|m| m.as_str())
@@ -5444,14 +5445,25 @@ impl Planner {
                     folder_english
                 );
 
-                // Use folder-extracted titles as fallback if AI didn't provide them
-                if chinese_title.is_none() && !folder_chinese.is_empty() {
-                    tracing::info!("[FOLDER] Using folder Chinese title: '{}'", folder_chinese);
+                // Use folder-extracted titles as primary source for Chinese content
+                // This ensures titles like "大江大河2" are correctly extracted from folder names
+                if !folder_chinese.is_empty() {
+                    let existing_chinese = chinese_title.clone();
                     chinese_title = Some(folder_chinese.clone());
+                    if existing_chinese.is_some() && existing_chinese != chinese_title {
+                        tracing::info!("[FOLDER] Overriding Chinese title: '{}' -> '{}'", existing_chinese.unwrap(), folder_chinese);
+                    } else if existing_chinese.is_none() {
+                        tracing::info!("[FOLDER] Using folder Chinese title: '{}'", folder_chinese);
+                    }
                 }
-                if english_title.is_none() && !folder_english.is_empty() {
-                    tracing::info!("[FOLDER] Using folder English title: '{}'", folder_english);
+                if !folder_english.is_empty() {
+                    let existing_english = english_title.clone();
                     english_title = Some(folder_english.clone());
+                    if existing_english.is_some() && existing_english != english_title {
+                        tracing::info!("[FOLDER] Overriding English title: '{}' -> '{}'", existing_english.unwrap(), folder_english);
+                    } else if existing_english.is_none() {
+                        tracing::info!("[FOLDER] Using folder English title: '{}'", folder_english);
+                    }
                 }
             } else {
                 tracing::debug!("[FOLDER] Skipped quality descriptor folder: '{}'", folder);
@@ -5476,8 +5488,31 @@ impl Planner {
         // Debug: print what we're searching for
         tracing::debug!("TMDB TV search - chinese_title: {:?}, english_title: {:?}, year: {:?}", chinese_title, english_title, search_year);
 
+        // Handle Chinese titles with trailing digits (e.g., "大江大河2")
+        // These often represent season numbers in TMDB (not separate shows)
+        let (chinese_search_title, chinese_season_hint): (Option<String>, Option<u16>) = if let Some(ref title) = chinese_title {
+            if let Some((base, season)) = Self::split_chinese_title_and_season(title) {
+                tracing::info!("[SEARCH] Split Chinese title '{}' into base '{}' and season hint {}", title, base, season);
+                (Some(base), Some(season))
+            } else {
+                (chinese_title.clone(), None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Create a new parsed with season hint if available
+        let parsed_with_season = if let Some(season) = chinese_season_hint {
+            ParsedFilename {
+                season: Some(season),
+                ..parsed.clone()
+            }
+        } else {
+            parsed.clone()
+        };
+
         // Search with Chinese and English titles in parallel
-        let chinese_title_clone = chinese_title.clone();
+        let chinese_title_clone = chinese_search_title.clone();
         let english_title_clone = english_title.clone();
 
         let tmdb_search_start = std::time::Instant::now();
@@ -5539,7 +5574,8 @@ impl Planner {
                         chinese_title.as_deref().unwrap_or(""),
                         english_title.as_deref().unwrap_or("")
                     );
-                    return self.get_tv_series_details(client, best.id, parsed).await;
+                    let (show, episode) = self.get_tv_series_details(client, best.id, &parsed_with_season).await?;
+                    return Ok((show, episode, chinese_season_hint));
                 }
             }
         }
@@ -5552,7 +5588,8 @@ impl Planner {
             let query = chinese_title.as_deref().unwrap_or("");
             if let Some(best) = self.select_best_tv_match(query, &chinese_results) {
                 tracing::info!("TMDB TV found (Chinese match): {}", best.name);
-                return self.get_tv_series_details(client, best.id, parsed).await;
+                let (show, episode) = self.get_tv_series_details(client, best.id, &parsed_with_season).await?;
+                return Ok((show, episode, chinese_season_hint));
             }
         }
 
@@ -5561,7 +5598,8 @@ impl Planner {
             let query = english_title.as_deref().unwrap_or("");
             if let Some(best) = self.select_best_tv_match(query, &english_results) {
                 tracing::info!("TMDB TV found (English match): {}", best.name);
-                return self.get_tv_series_details(client, best.id, parsed).await;
+                let (show, episode) = self.get_tv_series_details(client, best.id, &parsed_with_season).await?;
+                return Ok((show, episode, chinese_season_hint));
             }
         }
 
@@ -5571,7 +5609,38 @@ impl Planner {
             english_title,
             search_year
         );
-        Ok((None, None))
+        Ok((None, None, None))
+    }
+
+    /// Split Chinese title with trailing digits into base title and season number.
+    /// e.g., "大江大河2" -> ("大江大河", 2), "流浪地球2" -> ("流浪地球", 2)
+    /// Returns None if no trailing digits found or if digits are separated by space.
+    fn split_chinese_title_and_season(title: &str) -> Option<(String, u16)> {
+        let chars: Vec<char> = title.chars().collect();
+        let mut i = chars.len();
+        
+        while i > 0 && chars[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        
+        if i == chars.len() {
+            return None;
+        }
+        
+        if i > 0 && chars[i - 1].is_ascii_whitespace() {
+            return None;
+        }
+        
+        let base_title: String = chars[..i].iter().collect();
+        let season_str: String = chars[i..].iter().collect();
+        
+        if let Ok(season) = season_str.parse::<u16>() {
+            if season > 0 && season <= 99 {
+                return Some((base_title, season));
+            }
+        }
+        
+        None
     }
 
     /// Select the best TV show match from search results.

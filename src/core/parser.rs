@@ -190,8 +190,13 @@ impl FilenameParser {
     fn split_chinese_english(&self, title: &str) -> (Option<String>, Option<String>) {
         let has_chinese = title.chars().any(|c| c >= '\u{4e00}' && c <= '\u{9fff}');
         let has_ascii = title.chars().any(|c| c.is_ascii_alphabetic());
+        let has_digit = title.chars().any(|c| c.is_ascii_digit());
         
-        if !has_chinese || !has_ascii {
+        if !has_chinese {
+            return (None, None);
+        }
+        
+        if !has_ascii && !has_digit {
             return (None, None);
         }
         
@@ -204,7 +209,7 @@ impl FilenameParser {
         let mut chinese_part = String::new();
         let mut english_part = String::new();
         
-        for part in parts {
+        for (i, part) in parts.iter().enumerate() {
             if part.chars().any(|c| c >= '\u{4e00}' && c <= '\u{9fff}') {
                 if !chinese_part.is_empty() {
                     chinese_part.push(' ');
@@ -215,6 +220,10 @@ impl FilenameParser {
                     english_part.push(' ');
                 }
                 english_part.push_str(part);
+            } else if part.chars().all(|c| c.is_ascii_digit()) && !chinese_part.is_empty() {
+                if i > 0 && parts[i - 1].chars().any(|c| c >= '\u{4e00}' && c <= '\u{9fff}') {
+                    chinese_part.push_str(part);
+                }
             }
         }
         
@@ -248,6 +257,7 @@ impl FilenameParser {
         // Map guessit result to ParsedFilename
         // primary_title() already handles fallback to alternative_title
         if let Some(title) = guessit_result.primary_title() {
+            tracing::debug!("[PARSE] guessit primary_title: '{}'", title);
             // Try to separate Chinese and English parts from mixed titles
             let (chinese_part, english_part) = self.split_chinese_english(&title);
             
@@ -1072,6 +1082,19 @@ mod tests {
         assert_eq!(
             extract_title_from_dirname("流浪地球 2 (2023)"),
             Some("流浪地球".to_string())
+        );
+        
+        // Test case 3a: Chinese title with trailing number (no space) - sequel number
+        // This is a critical case: "大江大河2" should keep the "2" as part of title
+        assert_eq!(
+            extract_title_from_dirname("大江大河2 (2020) tt13659960"),
+            Some("大江大河2".to_string())
+        );
+        
+        // Test case 3b: Chinese title with trailing number (no space) - multiple digits
+        assert_eq!(
+            extract_title_from_dirname("寒战20 (2025)"),
+            Some("寒战20".to_string())
         );
         
         // Test case 4: Pure English title should return None
@@ -2916,6 +2939,27 @@ pub fn extract_season_from_dirname(dirname: &str) -> Option<u16> {
         }
     }
 
+    // Pattern 5: Chinese title followed by digits without space (e.g., "大江大河2", "琅琊榜2")
+    // This represents season number for Chinese TV series
+    // First extract the Chinese title part, then check for trailing digits
+    if let Some(chinese_title) = extract_title_from_dirname(name) {
+        let chars: Vec<char> = chinese_title.chars().collect();
+        let mut i = chars.len();
+        while i > 0 && chars[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        if i < chars.len() {
+            if i > 0 && (chars[i - 1] >= '\u{4e00}' && chars[i - 1] <= '\u{9fa5}') {
+                let season_str: String = chars[i..].iter().collect();
+                if let Ok(season) = season_str.parse::<u16>() {
+                    if season > 1 && season <= 99 {
+                        return Some(season);
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -3063,6 +3107,13 @@ pub fn extract_title_from_dirname(dirname: &str) -> Option<String> {
         // Add Chinese character to result
         if is_chinese_char(c) {
             result.push(c);
+            i += 1;
+        } else if c.is_ascii_digit() && !result.is_empty() {
+            // Keep trailing digits directly after Chinese characters (e.g., "大江大河2")
+            // This handles cases where number is part of the title, not a season indicator
+            if i == 0 || !chars[i - 1].is_ascii_whitespace() {
+                result.push(c);
+            }
             i += 1;
         } else if c.is_ascii_whitespace() {
             // Skip whitespace but don't add to result
