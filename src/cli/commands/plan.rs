@@ -92,6 +92,15 @@ async fn plan_media(
     // Calculate total operations
     let total_ops: usize = plan.items.iter().map(|i| i.operations.len()).sum();
     println!("  {} {}", "Total operations:".bold(), total_ops);
+
+    // Print alerts if any
+    if !plan.alerts.is_empty() {
+        println!();
+        println!("{}", "[ALERTS]".bold().yellow());
+        for (i, alert) in plan.alerts.iter().enumerate() {
+            println!("  {}. {}", i + 1, alert);
+        }
+    }
     println!();
 
     // Ensure target directory exists before saving plan

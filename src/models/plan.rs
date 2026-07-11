@@ -37,6 +37,8 @@ pub struct Plan {
     /// Poster download statistics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poster_stats: Option<PosterStats>,
+    /// Alert messages for potential issues during planning.
+    pub alerts: Vec<String>,
 }
 
 /// A single item in the plan.

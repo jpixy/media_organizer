@@ -11,6 +11,7 @@
 use crate::core::metadata::{self, CandidateMetadata, DirectoryType};
 use crate::core::parser::{self, FilenameParser, ParsedFilename};
 use crate::core::scanner::scan_directory;
+use std::sync::{Arc, Mutex};
 use crate::generators::{filename as gen_filename, folder as gen_folder};
 use crate::services::guessit_parser::GuessItParser;
 use crate::models::media::{
@@ -31,7 +32,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+
 use std::time::Instant;
 use futures::stream::{self, StreamExt};
 use tokio::sync::RwLock;
@@ -441,8 +442,9 @@ impl Planner {
 
         // Step 2: Process videos (pass source for correct cache key calculation)
         let process_start = Instant::now();
+        let alerts = Arc::new(Mutex::new(Vec::new()));
         let (mut items, unknown) = self
-            .process_videos(&scan_result.videos, source, target, media_type)
+            .process_videos(&scan_result.videos, source, target, media_type, &alerts)
             .await?;
         let _process_time = process_start.elapsed();
 
@@ -490,6 +492,7 @@ impl Planner {
                 download_count: poster_download_count,
                 skipped_count: poster_skipped_count,
             }),
+            alerts: alerts.lock().unwrap().clone(),
         };
 
         let total_time = total_start.elapsed();
@@ -514,6 +517,7 @@ impl Planner {
         source: &Path,
         target: &Path,
         media_type: MediaType,
+        alerts: &Arc<Mutex<Vec<String>>>,
     ) -> Result<(Vec<PlanItem>, Vec<UnknownItem>)> {
         let mut items = Vec::new();
         let mut unknown = Vec::new();
@@ -566,6 +570,7 @@ impl Planner {
                     let ffprobe_meta = ffprobe_map.get(&video.path);
                     let season_episodes_cache = Arc::clone(&season_episodes_cache);
                     let pb = pb.clone();
+                    let alerts = Arc::clone(alerts);
                     async move {
                         pb.set_message(format!("Processing: {}", video.filename));
                         let result = self
@@ -576,6 +581,7 @@ impl Planner {
                                 None,
                                 &season_episodes_cache,
                                 ffprobe_meta,
+                                &alerts,
                             )
                             .await;
                         pb.inc(1);
@@ -615,6 +621,7 @@ impl Planner {
                     let tv_series_cache = Arc::clone(&tv_series_cache);
                     let season_episodes_cache = Arc::clone(&season_episodes_cache);
                     let pb = pb.clone();
+                    let alerts = Arc::clone(alerts);
                     async move {
                         pb.set_message(format!("Processing: {}", video.filename));
                         // Check cache for existing show metadata from this directory
@@ -629,6 +636,7 @@ impl Planner {
                                 cached_show.as_ref(),
                                 &season_episodes_cache,
                                 ffprobe_meta,
+                                &alerts,
                             )
                             .await;
 
@@ -714,6 +722,7 @@ impl Planner {
         cached_show: Option<&TvSeriesMetadata>,
         season_cache: &SeasonEpisodesCache,
         precomputed_ffprobe: Option<&VideoMetadata>,
+        alerts: &Arc<Mutex<Vec<String>>>,
     ) -> Result<Option<(PlanItem, Option<TvSeriesMetadata>)>> {
         // ============================================================
         // HIGHEST PRIORITY: Check for TMDB/IMDB ID in filename OR parent directories
@@ -783,12 +792,15 @@ impl Planner {
                         target,
                         media_type,
                     };
-                    let (target_info, operations, poster_download) = match self.generate_target_info(
+                    let (target_info, operations, poster_download, gen_alerts) = match self.generate_target_info(
                         &params,
                     )? {
                         Some(result) => result,
                         None => return Ok(None),
                     };
+                    for alert in gen_alerts {
+                        alerts.lock().unwrap().push(alert);
+                    }
 
                     return Ok(Some((
                         PlanItem {
@@ -1100,12 +1112,15 @@ impl Planner {
                                 target,
                                 media_type,
                             };
-                            let (target_info, operations, poster_download) = match self.generate_target_info(
+                            let (target_info, operations, poster_download, gen_alerts) = match self.generate_target_info(
                                 &params,
                             )? {
                                 Some(result) => result,
                                 None => return Ok(None),
                             };
+                            for alert in gen_alerts {
+                                alerts.lock().unwrap().push(alert);
+                            }
 
                             tracing::info!(
                                 "[PATH-ID] Found TV show via path ID: {} S{:02}E{:02} ({})",
@@ -1230,12 +1245,15 @@ impl Planner {
                     target,
                     media_type,
                 };
-                let (target_info, operations, poster_download) = match self.generate_target_info(
-                    &params,
-                )? {
-                    Some(result) => result,
-                    None => return Ok(None),
-                };
+                let (target_info, operations, poster_download, gen_alerts) = match self.generate_target_info(
+                &params,
+            )? {
+                Some(result) => result,
+                None => return Ok(None),
+            };
+            for alert in gen_alerts {
+                alerts.lock().unwrap().push(alert);
+            }
 
                 let plan_item = PlanItem {
                     id: Uuid::new_v4().to_string(),
@@ -1633,12 +1651,15 @@ impl Planner {
             target,
             media_type,
         };
-        let (target_info, operations, poster_download) = match self.generate_target_info(
+        let (target_info, operations, poster_download, gen_alerts) = match self.generate_target_info(
             &params,
         )? {
             Some(result) => result,
             None => return Ok(None), // Skip: cannot determine country
         };
+        for alert in gen_alerts {
+            alerts.lock().unwrap().push(alert);
+        }
 
         let plan_item = PlanItem {
             id: Uuid::new_v4().to_string(),
@@ -2079,7 +2100,7 @@ impl Planner {
             target,
             media_type,
         };
-        let (target_info, operations, poster_download) = match self.generate_target_info(
+        let (target_info, operations, poster_download, _alerts) = match self.generate_target_info(
             &params,
         )? {
             Some(result) => result,
@@ -2507,7 +2528,7 @@ impl Planner {
             target,
             media_type: MediaType::TvSeries,
         };
-        let (target_info, operations, poster_download) = match self.generate_target_info(
+        let (target_info, operations, poster_download, _alerts) = match self.generate_target_info(
             &params,
         )? {
             Some(result) => result,
@@ -6539,7 +6560,7 @@ impl Planner {
             target,
             media_type: MediaType::Movies,
         };
-        let (target_info, operations, poster_download) = self
+        let (target_info, operations, poster_download, _alerts) = self
             .generate_target_info(&params)?
             .ok_or_else(|| {
                 crate::Error::other("Failed to generate target info for sibling movie")
@@ -6622,7 +6643,7 @@ impl Planner {
     fn generate_target_info(
         &self,
         params: &GenerateTargetInfoParams<'_>,
-    ) -> Result<Option<(TargetInfo, Vec<Operation>, Option<PosterDownloadStatus>)>> {
+    ) -> Result<Option<(TargetInfo, Vec<Operation>, Option<PosterDownloadStatus>, Vec<String>)>> {
         let mut operations = Vec::new();
 
         // Get file extension
@@ -6632,6 +6653,7 @@ impl Planner {
             .and_then(|e| e.to_str())
             .unwrap_or("mkv");
 
+        let mut alert_msg: Option<String> = None;
         let (folder_name, filename, nfo_name, season_folder) = match params.media_type {
             MediaType::Movies => {
                 let metadata = params.movie_metadata
@@ -6702,6 +6724,12 @@ impl Planner {
                         season_meta.air_date.as_deref(),
                     )
                 } else {
+                    let msg = format!(
+                        "[ALERT] Season metadata not available for '{}' Season {}. Using simplified folder name 'Season {:02}'. This may cause inconsistent folder naming.",
+                        show.name, season_num, season_num
+                    );
+                    tracing::warn!("{}", msg);
+                    alert_msg = Some(msg);
                     format!("Season {:02}", season_num)
                 };
 
@@ -7011,7 +7039,12 @@ impl Planner {
             poster: Some("poster.jpg".to_string()),
         };
 
-        Ok(Some((target_info, operations, poster_download_status)))
+        let alerts = if let Some(msg) = alert_msg {
+            vec![msg]
+        } else {
+            Vec::new()
+        };
+        Ok(Some((target_info, operations, poster_download_status, alerts)))
     }
 
     /// Add operations to move subtitle, sample, extras, and poster files.
@@ -8024,6 +8057,7 @@ mod tests {
                 download_count: 5,
                 skipped_count: 3,
             }),
+            alerts: Vec::new(),
         };
 
         assert!(plan.poster_stats.is_some());

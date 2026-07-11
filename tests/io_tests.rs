@@ -27,6 +27,7 @@ fn test_save_and_load_plan() {
         samples: vec![],
         unknown: vec![],
         poster_stats: None,
+        alerts: vec![],
     };
 
     let temp_dir = TempDir::new().unwrap();
@@ -55,6 +56,7 @@ fn test_plan_round_trip_with_items() {
         samples: vec![],
         unknown: vec![],
         poster_stats: None,
+        alerts: vec![],
     };
 
     let temp_dir = TempDir::new().unwrap();
